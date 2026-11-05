@@ -1,29 +1,42 @@
 package com.firelite.tv
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.lifecycleScope
 import com.firelite.core.data.FireLiteRepository
 import com.firelite.core.model.RemoteCommand
 import com.firelite.core.network.TvRemoteServer
 import com.firelite.tv.ui.FireLiteTheme
 import com.firelite.tv.ui.FireLiteTvScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
-  private val repository = FireLiteRepository()
+  private val repository by lazy { FireLiteRepository(applicationContext) }
   private lateinit var remoteServer: TvRemoteServer
+  private val serverIpState = mutableStateOf("127.0.0.1")
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
     remoteServer = TvRemoteServer(port = 8765, scope = lifecycleScope)
     remoteServer.start()
+
+    // Fetch local IP in background without blocking main UI thread
+    lifecycleScope.launch(Dispatchers.IO) {
+      val ip = TvRemoteServer.getLocalIpAddress()
+      withContext(Dispatchers.Main) {
+        serverIpState.value = ip
+      }
+    }
 
     // Listen for companion remote commands
     lifecycleScope.launch {
@@ -32,19 +45,22 @@ class MainActivity : ComponentActivity() {
       }
     }
 
-    val serverIp = TvRemoteServer.getLocalIpAddress()
-
     setContent {
       val connectedClients by remoteServer.connectedClients.collectAsState()
 
       FireLiteTheme {
         FireLiteTvScreen(
           repository = repository,
-          serverIp = serverIp,
+          serverIp = serverIpState.value,
           connectedClients = connectedClients
         )
       }
     }
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
   }
 
   private fun handleRemoteCommand(command: RemoteCommand) {

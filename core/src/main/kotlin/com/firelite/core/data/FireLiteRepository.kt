@@ -1,21 +1,32 @@
 package com.firelite.core.data
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.firelite.core.model.AppDockItem
 import com.firelite.core.model.Category
 import com.firelite.core.model.MediaItem
 import com.firelite.core.model.WeatherAlertInfo
 import com.firelite.core.model.WhatsNewItem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
-class FireLiteRepository {
+class FireLiteRepository(private val context: Context? = null) {
 
-  private val _kidsItems = MutableStateFlow<List<MediaItem>>(initialKidsItems())
+  private val json = Json { ignoreUnknownKeys = true }
+  private val scope = CoroutineScope(Dispatchers.IO)
+  private val prefs: SharedPreferences? = context?.getSharedPreferences("firelite_pins_store", Context.MODE_PRIVATE)
+
+  private val _kidsItems = MutableStateFlow<List<MediaItem>>(loadSavedPins(Category.KIDS) ?: initialKidsItems())
   val kidsItems: StateFlow<List<MediaItem>> = _kidsItems.asStateFlow()
 
-  private val _seriesItems = MutableStateFlow<List<MediaItem>>(initialSeriesItems())
+  private val _seriesItems = MutableStateFlow<List<MediaItem>>(loadSavedPins(Category.SERIES) ?: initialSeriesItems())
   val seriesItems: StateFlow<List<MediaItem>> = _seriesItems.asStateFlow()
 
   private val _whatsNew = MutableStateFlow<List<WhatsNewItem>>(initialWhatsNew())
@@ -38,17 +49,29 @@ class FireLiteRepository {
   fun addPinnedItem(item: MediaItem) {
     when (item.category) {
       Category.KIDS -> _kidsItems.update { current ->
-        if (current.any { it.id == item.id }) current else current + item
+        val updated = if (current.any { it.id == item.id }) current else current + item
+        persistPins(Category.KIDS, updated)
+        updated
       }
       Category.SERIES -> _seriesItems.update { current ->
-        if (current.any { it.id == item.id }) current else current + item
+        val updated = if (current.any { it.id == item.id }) current else current + item
+        persistPins(Category.SERIES, updated)
+        updated
       }
     }
   }
 
   fun removePinnedItem(itemId: String) {
-    _kidsItems.update { it.filterNot { item -> item.id == itemId } }
-    _seriesItems.update { it.filterNot { item -> item.id == itemId } }
+    _kidsItems.update { current ->
+      val updated = current.filterNot { item -> item.id == itemId }
+      persistPins(Category.KIDS, updated)
+      updated
+    }
+    _seriesItems.update { current ->
+      val updated = current.filterNot { item -> item.id == itemId }
+      persistPins(Category.SERIES, updated)
+      updated
+    }
   }
 
   fun moveCategory(itemId: String, targetCategory: Category) {
@@ -64,10 +87,14 @@ class FireLiteRepository {
   fun reorderPins(category: Category, fromIndex: Int, toIndex: Int) {
     when (category) {
       Category.KIDS -> _kidsItems.update { list ->
-        reorderList(list, fromIndex, toIndex)
+        val updated = reorderList(list, fromIndex, toIndex)
+        persistPins(Category.KIDS, updated)
+        updated
       }
       Category.SERIES -> _seriesItems.update { list ->
-        reorderList(list, fromIndex, toIndex)
+        val updated = reorderList(list, fromIndex, toIndex)
+        persistPins(Category.SERIES, updated)
+        updated
       }
     }
   }
@@ -82,6 +109,28 @@ class FireLiteRepository {
     return mutable
   }
 
+  private fun loadSavedPins(category: Category): List<MediaItem>? {
+    val p = prefs ?: return null
+    val key = if (category == Category.KIDS) "pins_kids_v1" else "pins_series_v1"
+    val rawJson = p.getString(key, null) ?: return null
+    return try {
+      json.decodeFromString<List<MediaItem>>(rawJson)
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun persistPins(category: Category, items: List<MediaItem>) {
+    val p = prefs ?: return
+    scope.launch {
+      try {
+        val key = if (category == Category.KIDS) "pins_kids_v1" else "pins_series_v1"
+        val rawJson = json.encodeToString(items)
+        p.edit().putString(key, rawJson).apply()
+      } catch (_: Exception) {}
+    }
+  }
+
   companion object {
     fun initialKidsItems(): List<MediaItem> = listOf(
       MediaItem(
@@ -93,9 +142,12 @@ class FireLiteRepository {
         durationOrEpisodes = "Season 12",
         badge = "POPULAR",
         rating = "TV-Y7",
-        accentColorHex = 0xFF38BDF8, // Dynamic Accent: Blue
-        contentUrl = "hotstar://play/doraemon",
-        deepLinkPackage = "in.startv.hotstar"
+        accentColorHex = 0xFF00A3FF,
+        contentUrl = "https://www.hotstar.com/in/shows/doraemon/17621",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Doraemon",
+        deepLinkPackage = "in.startv.hotstar",
+        artworkResName = "art_doraemon",
+        characterResName = "art_doraemon_char"
       ),
       MediaItem(
         id = "k2",
@@ -106,9 +158,11 @@ class FireLiteRepository {
         durationOrEpisodes = "Season 8",
         badge = "FUN",
         rating = "TV-PG",
-        accentColorHex = 0xFFEF4444, // Dynamic Accent: Warm Red
-        contentUrl = "hotstar://play/shinchan",
-        deepLinkPackage = "in.startv.hotstar"
+        accentColorHex = 0xFFEF4444,
+        contentUrl = "https://www.hotstar.com/in/shows/shinchan/1260000030",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Shinchan",
+        deepLinkPackage = "in.startv.hotstar",
+        artworkResName = "art_shinchan"
       ),
       MediaItem(
         id = "k3",
@@ -119,8 +173,10 @@ class FireLiteRepository {
         durationOrEpisodes = "Season 4",
         rating = "TV-Y7",
         accentColorHex = 0xFF6366F1,
-        contentUrl = "hotstar://play/ninja-hattori",
-        deepLinkPackage = "in.startv.hotstar"
+        contentUrl = "https://www.hotstar.com/in/shows/ninja-hattori/1260000045",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Ninja+Hattori",
+        deepLinkPackage = "in.startv.hotstar",
+        artworkResName = "art_hattori"
       ),
       MediaItem(
         id = "k4",
@@ -131,8 +187,10 @@ class FireLiteRepository {
         durationOrEpisodes = "Season 10",
         rating = "TV-Y",
         accentColorHex = 0xFFF59E0B,
-        contentUrl = "hotstar://play/motu-patlu",
-        deepLinkPackage = "in.startv.hotstar"
+        contentUrl = "https://www.hotstar.com/in/shows/motu-patlu/1260005510",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Motu+Patlu",
+        deepLinkPackage = "in.startv.hotstar",
+        artworkResName = "art_motu_patlu"
       ),
       MediaItem(
         id = "k5",
@@ -143,8 +201,25 @@ class FireLiteRepository {
         durationOrEpisodes = "24 eps",
         rating = "TV-Y",
         accentColorHex = 0xFF14B8A6,
-        contentUrl = "vnd.youtube://shintu-buntu",
-        deepLinkPackage = "com.google.android.youtube.tv"
+        contentUrl = "https://www.youtube.com/results?search_query=Shintu+aur+Buntu",
+        fallbackUrl = "youtube://search?q=Shintu+aur+Buntu",
+        deepLinkPackage = "com.amazon.firetv.youtube",
+        artworkResName = "art_shintu_buntu"
+      ),
+      MediaItem(
+        id = "k6",
+        title = "Pokemon",
+        category = Category.KIDS,
+        platform = "YouTube",
+        subtitle = "Gotta Catch 'Em All",
+        durationOrEpisodes = "Season 1",
+        badge = "ANIME",
+        rating = "TV-Y7",
+        accentColorHex = 0xFFEAB308,
+        contentUrl = "https://www.youtube.com/results?search_query=Pokemon+IndiGo+League",
+        fallbackUrl = "youtube://search?q=Pokemon",
+        deepLinkPackage = "com.amazon.firetv.youtube",
+        artworkResName = "art_pokemon"
       )
     )
 
@@ -159,8 +234,10 @@ class FireLiteRepository {
         badge = "NEW EPISODES",
         rating = "TV-14",
         accentColorHex = 0xFFF43F5E,
-        contentUrl = "hotstar://play/heart-beat",
-        deepLinkPackage = "in.startv.hotstar"
+        contentUrl = "https://www.hotstar.com/in/shows/heart-beat/1271302824",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Heart+Beat",
+        deepLinkPackage = "in.startv.hotstar",
+        artworkResName = "art_heart_beat"
       ),
       MediaItem(
         id = "s2",
@@ -172,8 +249,10 @@ class FireLiteRepository {
         badge = "TOP 10",
         rating = "TV-MA",
         accentColorHex = 0xFFEAB308,
-        contentUrl = "netflix://title/the-court",
-        deepLinkPackage = "com.netflix.ninja"
+        contentUrl = "https://www.netflix.com/title/81435689",
+        fallbackUrl = "netflix://title/81435689",
+        deepLinkPackage = "com.netflix.ninja",
+        artworkResName = "art_the_court"
       ),
       MediaItem(
         id = "s3",
@@ -185,8 +264,10 @@ class FireLiteRepository {
         badge = "PRIME TIME",
         rating = "TV-PG",
         accentColorHex = 0xFF06B6D4,
-        contentUrl = "hotstar://play/siragadikka-aasai",
-        deepLinkPackage = "in.startv.hotstar"
+        contentUrl = "https://www.hotstar.com/in/shows/siragadikka-aasai/1260127599",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Siragadikka+Aasai",
+        deepLinkPackage = "in.startv.hotstar",
+        artworkResName = "art_siragadikka"
       ),
       MediaItem(
         id = "s4",
@@ -198,62 +279,86 @@ class FireLiteRepository {
         badge = "TRENDING",
         rating = "TV-14",
         accentColorHex = 0xFF10B981,
-        contentUrl = "sunnxt://content/ayyanar-thunai",
-        deepLinkPackage = "com.suntv.sunnxt"
+        contentUrl = "sunnxt://deeplink?content_id=ayyanar_thunai",
+        fallbackUrl = "https://www.sunnxt.com",
+        deepLinkPackage = "com.suntv.sunnxt",
+        artworkResName = "art_ayyanar"
       ),
       MediaItem(
         id = "s5",
-        title = "Our Planet",
-        category = Category.SERIES,
-        platform = "Netflix",
-        subtitle = "Nature & Wildlife Documentary",
-        durationOrEpisodes = "Season 2",
-        badge = "4K HDR",
-        rating = "TV-G",
-        accentColorHex = 0xFF10B981, // Dynamic Accent: Nature Green
-        contentUrl = "netflix://title/our-planet",
-        deepLinkPackage = "com.netflix.ninja"
-      ),
-      MediaItem(
-        id = "s6",
-        title = "Brothers and Sisters",
+        title = "Brothers & Sisters",
         category = Category.SERIES,
         platform = "Prime Video",
         subtitle = "Drama Series",
         durationOrEpisodes = "Season 1",
         rating = "TV-14",
         accentColorHex = 0xFF8B5CF6,
-        contentUrl = "primevideo://content/brothers-sisters",
-        deepLinkPackage = "com.amazon.amazonvideo.livingroom"
+        contentUrl = "amzn://avod/search?phrase=Brothers+and+Sisters",
+        fallbackUrl = "https://app.primevideo.com/search?phrase=Brothers+and+Sisters",
+        deepLinkPackage = "com.amazon.firebat",
+        artworkResName = "art_brothers"
+      ),
+      MediaItem(
+        id = "s6",
+        title = "Panchayat",
+        category = Category.SERIES,
+        platform = "Prime Video",
+        subtitle = "Comedy Drama",
+        durationOrEpisodes = "Season 3",
+        badge = "POPULAR",
+        rating = "TV-14",
+        accentColorHex = 0xFFF59E0B,
+        contentUrl = "amzn://avod/search?phrase=Panchayat",
+        fallbackUrl = "https://app.primevideo.com/search?phrase=Panchayat",
+        deepLinkPackage = "com.amazon.firebat",
+        artworkResName = "art_panchayat"
       )
     )
 
     fun initialWhatsNew(): List<WhatsNewItem> = listOf(
       WhatsNewItem(
         id = "wn1",
-        title = "Ayyanar Thunai Ep 42",
-        platform = "Sun NXT",
-        posterAccentHex = 0xFF10B981
+        title = "The Penguin",
+        platform = "Netflix",
+        contentType = "Series",
+        posterResName = "art_wn_penguin",
+        platformIconResName = "app_netflix",
+        posterAccentHex = 0xFFE50914
       ),
       WhatsNewItem(
         id = "wn2",
-        title = "The Court Finale",
-        platform = "Netflix",
-        posterAccentHex = 0xFFEAB308
+        title = "Citadel: Honey Bunny",
+        platform = "Prime Video",
+        contentType = "Series",
+        posterResName = "art_wn_citadel",
+        platformIconResName = "app_primevideo",
+        posterAccentHex = 0xFF00A8E1
       ),
       WhatsNewItem(
         id = "wn3",
-        title = "Doraemon New Season",
+        title = "CTRL",
+        platform = "Netflix",
+        contentType = "Movie",
+        posterResName = "art_wn_ctrl",
+        platformIconResName = "app_netflix",
+        posterAccentHex = 0xFFE50914
+      ),
+      WhatsNewItem(
+        id = "wn4",
+        title = "Kishkindha Kaandam",
         platform = "JioHotstar",
-        posterAccentHex = 0xFF38BDF8
+        contentType = "Movie",
+        posterResName = "art_wn_kishkindha",
+        platformIconResName = "app_jiohotstar",
+        posterAccentHex = 0xFF00A3FF
       )
     )
 
     fun initialDockItems(): List<AppDockItem> = listOf(
-      AppDockItem("dock1", "JioHotstar", "in.startv.hotstar", "LAUNCH_APP"),
-      AppDockItem("dock2", "Netflix", "com.netflix.ninja", "LAUNCH_APP"),
-      AppDockItem("dock3", "Prime Video", "com.amazon.amazonvideo.livingroom", "LAUNCH_APP"),
-      AppDockItem("dock4", "YouTube", "com.google.android.youtube.tv", "LAUNCH_APP"),
+      AppDockItem("dock1", "JioHotstar", "in.startv.hotstar", "LAUNCH_APP", iconResName = "app_jiohotstar"),
+      AppDockItem("dock2", "Netflix", "com.netflix.ninja", "LAUNCH_APP", iconResName = "app_netflix"),
+      AppDockItem("dock3", "Prime Video", "com.amazon.firebat", "LAUNCH_APP", iconResName = "app_primevideo"),
+      AppDockItem("dock4", "YouTube", "com.amazon.firetv.youtube", "LAUNCH_APP", iconResName = "app_youtube"),
       AppDockItem("dock5", "All Apps", "", "ALL_APPS", isSystemAction = true),
       AppDockItem("dock6", "Search", "", "SEARCH", isSystemAction = true),
       AppDockItem("dock7", "Settings", "", "SETTINGS", isSystemAction = true),

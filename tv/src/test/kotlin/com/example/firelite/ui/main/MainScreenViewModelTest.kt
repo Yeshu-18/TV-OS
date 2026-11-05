@@ -1,27 +1,39 @@
-package com.example.firelite.ui.main
+package com.firelite.tv
 
-import com.example.firelite.data.DataRepository
+import com.firelite.core.data.FireLiteRepository
+import com.firelite.core.model.Category
+import com.firelite.core.model.MediaItem
 import junit.framework.TestCase.assertEquals
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flow
+import junit.framework.TestCase.assertTrue
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
-class MainScreenViewModelTest {
+class FireLiteRepositoryTest {
   @Test
-  fun uiState_initiallyLoading() = runTest {
-    val viewModel = MainScreenViewModel(FakeMyModelRepository())
-    assertEquals(viewModel.uiState.first(), MainScreenUiState.Loading)
+  fun initialPins_areLoadedCorrectly() = runTest {
+    val repo = FireLiteRepository()
+    val kids = repo.kidsItems.value
+    val series = repo.seriesItems.value
+
+    assertEquals(6, kids.size)
+    assertEquals(6, series.size)
+    assertEquals("Doraemon", kids[0].title)
+    assertEquals("Heart Beat", series[0].title)
   }
 
   @Test
-  fun uiState_onItemSaved_isDisplayed() = runTest {
-    val viewModel = MainScreenViewModel(FakeMyModelRepository())
-    assertEquals(viewModel.uiState.first(), MainScreenUiState.Loading)
-  }
-}
+  fun addAndRemovePin_worksAsExpected() = runTest {
+    val repo = FireLiteRepository()
+    val newItem = MediaItem(
+      id = "test1",
+      title = "Test Show",
+      category = Category.KIDS,
+      platform = "YouTube"
+    )
+    repo.addPinnedItem(newItem)
+    assertTrue(repo.kidsItems.value.any { it.id == "test1" })
 
-private class FakeMyModelRepository : DataRepository {
-  override val data: Flow<List<String>> = flow { emit(listOf("Sample")) }
+    repo.removePinnedItem("test1")
+    assertTrue(repo.kidsItems.value.none { it.id == "test1" })
+  }
 }

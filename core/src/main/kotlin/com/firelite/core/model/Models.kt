@@ -20,7 +20,11 @@ data class MediaItem(
   val rating: String = "PG",
   val accentColorHex: Long = 0xFF7C8CFF,
   val contentUrl: String? = null,
-  val deepLinkPackage: String? = null
+  val deepLinkPackage: String? = null,
+  val fallbackUrl: String? = null,
+  val artworkResName: String? = null,
+  val bannerResName: String? = null,
+  val characterResName: String? = null
 )
 
 @Serializable
@@ -28,16 +32,19 @@ data class WhatsNewItem(
   val id: String,
   val title: String,
   val platform: String,
+  val contentType: String = "Series",
+  val posterResName: String? = null,
+  val platformIconResName: String? = null,
   val posterAccentHex: Long = 0xFF7C8CFF
 )
 
 @Serializable
 data class WeatherAlertInfo(
   val location: String = "Bengaluru",
-  val temperature: String = "27°",
-  val condition: String = "Cloudy",
-  val alertTitle: String? = "Rain expected",
-  val alertTime: String? = "6–8 PM"
+  val temperature: String = "24°C",
+  val condition: String = "Light Rain",
+  val alertTitle: String? = "Heavy rain expected",
+  val alertTime: String? = "6:00 PM – 8:00 PM"
 )
 
 enum class DockActionType {
@@ -54,5 +61,6 @@ data class AppDockItem(
   val name: String,
   val packageName: String,
   val actionType: String = "LAUNCH_APP",
-  val isSystemAction: Boolean = false
+  val isSystemAction: Boolean = false,
+  val iconResName: String? = null
 )
