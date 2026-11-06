@@ -1,7 +1,9 @@
 package com.firelite.tv.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -54,9 +56,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -78,6 +84,7 @@ import com.firelite.core.model.WeatherAlertInfo
 import com.firelite.core.model.WhatsNewItem
 import com.firelite.core.theme.FireLiteMotion
 import com.firelite.tv.util.AppIconLoader
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -1029,3 +1036,134 @@ fun AppDockButton(
     )
   }
 }
+
+/**
+ * High-definition TV App Tile:
+ * Wide card (150dp x 92dp) with Apple TV spring physics and RenderThread halo glow.
+ */
+@Composable
+fun TvAppTile(
+  title: String,
+  packageName: String?,
+  iconResName: String? = null,
+  systemIcon: ImageVector? = null,
+  onSelect: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  val interactionSource = remember { MutableInteractionSource() }
+  val isFocused by interactionSource.collectIsFocusedAsState()
+
+  // Apple TV spring physics executed directly inside graphicsLayer on RenderThread
+  val scaleAnim = remember { androidx.compose.animation.core.Animatable(1.0f) }
+  val glowAnim = remember { androidx.compose.animation.core.Animatable(0.0f) }
+
+  LaunchedEffect(isFocused) {
+    launch {
+      scaleAnim.animateTo(
+        targetValue = if (isFocused) 1.12f else 1.0f,
+        animationSpec = spring(
+          dampingRatio = 0.72f, // Gentle natural Apple TV spring bounce
+          stiffness = 420f
+        )
+      )
+    }
+    launch {
+      glowAnim.animateTo(
+        targetValue = if (isFocused) 1.0f else 0.0f,
+        animationSpec = tween(durationMillis = 140)
+      )
+    }
+  }
+
+  val dynamicAppIcon = remember(packageName) {
+    AppIconLoader.getAppIcon(context, packageName)
+  }
+  val iconResId = getDrawableResId(iconResName)
+
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    modifier = modifier
+      .width(150.dp)
+      .graphicsLayer {
+        val s = scaleAnim.value
+        scaleX = s
+        scaleY = s
+        translationY = if (s > 1.0f) (-5.dp.toPx() * ((s - 1.0f) / 0.12f)) else 0f
+      }
+      .clickable(interactionSource = interactionSource, indication = null) {
+        onSelect()
+      }
+  ) {
+    Box(
+      modifier = Modifier
+        .size(width = 150.dp, height = 92.dp)
+        .drawBehind {
+          val glow = glowAnim.value
+          if (glow > 0.01f) {
+            drawRoundRect(
+              color = Color(0xFF38BDF8).copy(alpha = 0.40f * glow),
+              cornerRadius = CornerRadius(16.dp.toPx()),
+              size = Size(size.width + 10.dp.toPx() * glow, size.height + 10.dp.toPx() * glow),
+              topLeft = Offset(-5.dp.toPx() * glow, -5.dp.toPx() * glow)
+            )
+          }
+        }
+        .clip(RoundedCornerShape(14.dp))
+        .background(
+          if (isFocused) Color(0x771E293B) else Color(0x330F172A)
+        )
+        .border(
+          width = if (isFocused) 2.dp else 1.dp,
+          color = if (isFocused) Color(0xFF38BDF8) else Color(0x22FFFFFF),
+          shape = RoundedCornerShape(14.dp)
+        ),
+      contentAlignment = Alignment.Center
+    ) {
+      if (dynamicAppIcon != null) {
+        Image(
+          bitmap = dynamicAppIcon,
+          contentDescription = title,
+          contentScale = ContentScale.Fit,
+          modifier = Modifier
+            .fillMaxSize()
+            .padding(14.dp)
+        )
+      } else if (iconResId != null) {
+        Image(
+          painter = painterResource(id = iconResId),
+          contentDescription = title,
+          contentScale = ContentScale.Fit,
+          modifier = Modifier
+            .fillMaxSize()
+            .padding(14.dp)
+        )
+      } else if (systemIcon != null) {
+        Icon(
+          imageVector = systemIcon,
+          contentDescription = title,
+          tint = if (isFocused) Color(0xFF38BDF8) else Color(0xEEFFFFFF),
+          modifier = Modifier.size(36.dp)
+        )
+      } else {
+        Text(
+          text = title.take(2).uppercase(),
+          fontSize = 20.sp,
+          fontWeight = FontWeight.Bold,
+          color = if (isFocused) Color(0xFF38BDF8) else Color.White
+        )
+      }
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+      text = title,
+      fontSize = 12.sp,
+      fontWeight = if (isFocused) FontWeight.Bold else FontWeight.Medium,
+      color = if (isFocused) Color.White else Color(0xCCD1D5DB),
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+  }
+}
+

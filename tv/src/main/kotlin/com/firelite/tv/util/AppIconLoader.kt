@@ -11,7 +11,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * High-performance, cached dynamic icon and banner loader for installed Android packages.
- * Automatically resolves leanback TV banners or application icons directly from PackageManager.
+ * Automatically resolves leanback TV banners or application icons directly from PackageManager
+ * preserving true aspect ratios without distortion.
  */
 object AppIconLoader {
 
@@ -32,7 +33,7 @@ object AppIconLoader {
     for (pkg in packagesToTry) {
       try {
         val drawable: Drawable = pm.getApplicationBanner(pkg) ?: pm.getApplicationIcon(pkg)
-        val bitmap = drawableToBitmap(drawable, 96, 96)
+        val bitmap = drawableToBitmap(drawable)
         val imageBitmap = bitmap.asImageBitmap()
         cache[packageName] = imageBitmap
         return imageBitmap
@@ -42,21 +43,16 @@ object AppIconLoader {
     return null
   }
 
-  private fun drawableToBitmap(drawable: Drawable, targetWidth: Int, targetHeight: Int): Bitmap {
+  private fun drawableToBitmap(drawable: Drawable): Bitmap {
     if (drawable is BitmapDrawable && drawable.bitmap != null) {
-      val bmp = drawable.bitmap
-      if (bmp.width == targetWidth && bmp.height == targetHeight) return bmp
-      return Bitmap.createScaledBitmap(bmp, targetWidth, targetHeight, true)
+      return drawable.bitmap
     }
-    val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else targetWidth
-    val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else targetHeight
+    val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 128
+    val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 128
     val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     drawable.setBounds(0, 0, w, h)
     drawable.draw(canvas)
-    if (w != targetWidth || h != targetHeight) {
-      return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
-    }
     return bitmap
   }
 }
