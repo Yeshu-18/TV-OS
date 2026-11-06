@@ -1,4 +1,4 @@
-# Fire TV Stick 3rd Gen (sheldonp) — Debloat & Optimization Guide
+w# Fire TV Stick 3rd Gen (sheldonp) — Debloat & Optimization Guide
 
 > **Device Context**  
 > - **Model**: Amazon Fire TV Stick 3rd Generation (`AFTSSS`)  
