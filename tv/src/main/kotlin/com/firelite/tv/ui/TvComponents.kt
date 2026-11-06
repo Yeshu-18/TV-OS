@@ -1,14 +1,12 @@
 package com.firelite.tv.ui
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -53,13 +51,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,7 +69,6 @@ import com.firelite.core.model.Category
 import com.firelite.core.model.MediaItem
 import com.firelite.core.model.WeatherAlertInfo
 import com.firelite.core.model.WhatsNewItem
-import com.firelite.core.theme.FireLiteColors
 import com.firelite.core.theme.FireLiteMotion
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -90,10 +87,10 @@ fun getDrawableResId(name: String?): Int? {
 }
 
 /**
- * Top Bar adhering to approved reference:
- * Left: "FIRELITE" brand + "YOUR SHOWS • YOUR WAY"
- * Right: Clock time (10:42 PM) + Date (Thu, 23 Oct) + Glass Search & Settings circular buttons
- * Efficient minute-aligned time updates (avoids 1-second recomposition overhead).
+ * Top Bar:
+ * Left: "FIRELITE" uppercase brand + "YOUR SHOWS • YOUR WAY"
+ * Right: Clock time (10:42 PM) + Date (Thu, 23 Oct) + Glass Search & Settings circular buttons.
+ * Optimized with minute-aligned timer (no per-second recompositions).
  */
 @Composable
 fun TvTopBar(
@@ -112,7 +109,6 @@ fun TvTopBar(
       currentTime = timeFormat.format(now)
       currentDate = dateFormat.format(now)
 
-      // Sleep until the start of the next minute to minimize CPU wakeups
       val calendar = Calendar.getInstance()
       val second = calendar.get(Calendar.SECOND)
       val millis = calendar.get(Calendar.MILLISECOND)
@@ -204,7 +200,10 @@ fun TopBarGlassIconButton(
   Box(
     modifier = modifier
       .size(34.dp)
-      .scale(scale)
+      .graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+      }
       .clip(CircleShape)
       .background(if (isFocused) Color(0x661E293B) else Color(0x330F172A))
       .border(1.2.dp, borderColor, CircleShape)
@@ -224,9 +223,8 @@ fun TopBarGlassIconButton(
 
 /**
  * 2.5D Pinned Content Card:
- * Kids: ~94dp × 82dp (4:3 aspect), rounded 14dp, real character artwork, floating pill when focused.
- * Series: ~104dp × 72dp (1.4 aspect), rounded 12dp, real series artwork.
- * Title label displayed underneath with stable layout height (prevents focus jitter).
+ * Hardware-accelerated with graphicsLayer (scale and translationY).
+ * Zero layout recalculation during focus animation ensures 60 FPS on Fire TV.
  */
 @Composable
 fun PinnedContentCard(
@@ -256,11 +254,9 @@ fun PinnedContentCard(
     label = "cardScale"
   )
 
-  val translateY by animateDpAsState(
-    targetValue = if (isFocused) (-4).dp else 0.dp,
-    animationSpec = tween(durationMillis = FireLiteMotion.Focus),
-    label = "cardTranslateY"
-  )
+  val density = LocalDensity.current
+  val translateYPx = remember(density) { with(density) { (-4).dp.toPx() } }
+  val currentTranslateY = if (isFocused) translateYPx else 0f
 
   val borderColor by animateColorAsState(
     targetValue = if (isFocused) Color(0xFF38BDF8) else Color(0x2EFFFFFF),
@@ -283,8 +279,11 @@ fun PinnedContentCard(
     Box(
       modifier = Modifier
         .size(width = cardWidth, height = cardHeight)
-        .offset(y = translateY)
-        .scale(scale)
+        .graphicsLayer {
+          scaleX = scale
+          scaleY = scale
+          translationY = currentTranslateY
+        }
         .clip(RoundedCornerShape(cornerRadius))
         .background(Color(0xFF131722))
         .border(if (isFocused) 2.dp else 1.dp, borderColor, RoundedCornerShape(cornerRadius))
@@ -301,7 +300,6 @@ fun PinnedContentCard(
           modifier = Modifier.fillMaxSize()
         )
       } else {
-        // Fallback gradient with letter
         Box(
           modifier = Modifier
             .fillMaxSize()
@@ -359,7 +357,7 @@ fun PinnedContentCard(
       }
     }
 
-    // 4. Stable height title label underneath card (alpha transition avoids layout shifts)
+    // 4. Stable height title label underneath card (alpha transition avoids layout remeasurement)
     Spacer(modifier = Modifier.height(4.dp))
     Text(
       text = item.title,
@@ -393,7 +391,6 @@ fun PinnedContentRow(
   Column(modifier = modifier.fillMaxWidth()) {
     // Row Header (Section Title)
     if (isKids) {
-      // "📌 PINNED" subheader + "🧸 KIDS"
       Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(start = 28.dp, bottom = 4.dp)
@@ -423,7 +420,6 @@ fun PinnedContentRow(
         )
       }
     } else {
-      // "🎬 SERIES"
       Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(start = 28.dp, top = 2.dp, bottom = 6.dp)
@@ -774,7 +770,7 @@ fun WeatherAlertPanel(
  * Floating App Dock:
  * Exactly 8 items: JioHotstar, Netflix, Prime Video, YouTube, All Apps, Search, Settings, Screen Mirror.
  * (NO Power on TV dock)
- * Translucent glass capsule with focus scaling, glow and labels.
+ * Hardware-accelerated with graphicsLayer.
  */
 @Composable
 fun FloatingAppDock(
@@ -815,10 +811,10 @@ fun AppDockButton(
     animationSpec = tween(durationMillis = FireLiteMotion.Focus),
     label = "dockScale"
   )
-  val translateY by animateDpAsState(
-    targetValue = if (isFocused) (-3).dp else 0.dp,
-    label = "dockTranslate"
-  )
+  val density = LocalDensity.current
+  val translateYPx = remember(density) { with(density) { (-3).dp.toPx() } }
+  val currentTranslateY = if (isFocused) translateYPx else 0f
+
   val borderColor by animateColorAsState(
     targetValue = if (isFocused) Color(0xFF38BDF8) else Color(0x1AFFFFFF),
     label = "dockBorder"
@@ -836,8 +832,11 @@ fun AppDockButton(
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
     modifier = modifier
-      .offset(y = translateY)
-      .scale(scale)
+      .graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+        translationY = currentTranslateY
+      }
       .clickable(interactionSource = interactionSource, indication = null) {
         onSelect()
       }

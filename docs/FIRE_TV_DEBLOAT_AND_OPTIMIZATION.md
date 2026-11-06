@@ -132,3 +132,4 @@ Third-party apps can be reinstalled directly from the Amazon Appstore or via ADB
 ```bash
 adb install <path-to-apk>
 ```
+
