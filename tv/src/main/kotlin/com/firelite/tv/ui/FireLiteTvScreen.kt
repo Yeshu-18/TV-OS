@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,8 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -38,6 +37,7 @@ import com.firelite.core.model.Category
 import com.firelite.core.model.MediaItem
 import com.firelite.core.model.WhatsNewItem
 import com.firelite.tv.R
+import kotlinx.coroutines.delay
 
 enum class TvOverlayState {
   NONE,
@@ -63,13 +63,22 @@ fun FireLiteTvScreen(
 
   var overlayState by remember { mutableStateOf(TvOverlayState.NONE) }
 
-  // Focus Requesters for predictable 2D D-pad traversal
-  val topBarFocusRequester = remember { FocusRequester() }
-  val kidsFocusRequester = remember { FocusRequester() }
-  val seriesFocusRequester = remember { FocusRequester() }
+  // Target FocusRequesters bound directly to focusable items (Search, Cards, Dock, Rail)
+  val searchFocusRequester = remember { FocusRequester() }
+  val settingsFocusRequester = remember { FocusRequester() }
+  val kidsCardFocusRequester = remember { FocusRequester() }
+  val seriesCardFocusRequester = remember { FocusRequester() }
   val whatsNewFocusRequester = remember { FocusRequester() }
   val weatherFocusRequester = remember { FocusRequester() }
   val dockFocusRequester = remember { FocusRequester() }
+
+  // Request initial focus on first Kids card (Doraemon) matching reference design
+  LaunchedEffect(Unit) {
+    delay(150)
+    try {
+      kidsCardFocusRequester.requestFocus()
+    } catch (_: Exception) {}
+  }
 
   // Global BackHandler for overlay dismissal
   BackHandler(enabled = overlayState != TvOverlayState.NONE) {
@@ -80,8 +89,10 @@ fun FireLiteTvScreen(
   fun launchPackageWithFallback(primaryPkg: String, fallbackPkg: String? = null): Boolean {
     val pm = context.packageManager
     var intent = pm.getLaunchIntentForPackage(primaryPkg)
+      ?: pm.getLeanbackLaunchIntentForPackage(primaryPkg)
     if (intent == null && fallbackPkg != null) {
       intent = pm.getLaunchIntentForPackage(fallbackPkg)
+        ?: pm.getLeanbackLaunchIntentForPackage(fallbackPkg)
     }
     return if (intent != null) {
       try {
@@ -189,7 +200,6 @@ fun FireLiteTvScreen(
       "SEARCH" -> overlayState = TvOverlayState.SEARCH
       "SETTINGS" -> overlayState = TvOverlayState.SETTINGS
       "SCREEN_MIRROR" -> {
-        // Safe intent probe for Fire TV Display Mirroring before opening overlay fallback
         var mirrorLaunched = false
         val mirrorIntents = listOf(
           Intent("com.amazon.device.settings.SYSTEM_MIRRORING"),
@@ -258,11 +268,10 @@ fun FireLiteTvScreen(
       TvTopBar(
         onSearchClick = { overlayState = TvOverlayState.SEARCH },
         onSettingsClick = { overlayState = TvOverlayState.SETTINGS },
-        modifier = Modifier
-          .focusRequester(topBarFocusRequester)
-          .focusProperties {
-            down = kidsFocusRequester
-          }
+        searchFocusRequester = searchFocusRequester,
+        settingsFocusRequester = settingsFocusRequester,
+        downFocusRequester = kidsCardFocusRequester,
+        rightRailFocusRequester = whatsNewFocusRequester
       )
 
       Spacer(modifier = Modifier.height(4.dp))
@@ -286,13 +295,10 @@ fun FireLiteTvScreen(
             onSelectItem = onSelectMedia,
             onFocusItem = { repository.setActiveContent(it) },
             onScrollMore = { overlayState = TvOverlayState.ALL_APPS },
-            modifier = Modifier
-              .focusRequester(kidsFocusRequester)
-              .focusProperties {
-                up = topBarFocusRequester
-                down = seriesFocusRequester
-                right = whatsNewFocusRequester
-              }
+            firstItemFocusRequester = kidsCardFocusRequester,
+            upFocusRequester = searchFocusRequester,
+            downFocusRequester = seriesCardFocusRequester,
+            rightEdgeFocusRequester = whatsNewFocusRequester
           )
 
           PinnedContentRow(
@@ -301,13 +307,10 @@ fun FireLiteTvScreen(
             onSelectItem = onSelectMedia,
             onFocusItem = { repository.setActiveContent(it) },
             onScrollMore = { overlayState = TvOverlayState.ALL_APPS },
-            modifier = Modifier
-              .focusRequester(seriesFocusRequester)
-              .focusProperties {
-                up = kidsFocusRequester
-                down = dockFocusRequester
-                right = weatherFocusRequester
-              }
+            firstItemFocusRequester = seriesCardFocusRequester,
+            upFocusRequester = kidsCardFocusRequester,
+            downFocusRequester = dockFocusRequester,
+            rightEdgeFocusRequester = weatherFocusRequester
           )
         }
 
@@ -321,12 +324,10 @@ fun FireLiteTvScreen(
           WhatsNewPanel(
             items = whatsNew,
             onSelectItem = onSelectWhatsNewItem,
-            modifier = Modifier
-              .focusRequester(whatsNewFocusRequester)
-              .focusProperties {
-                left = kidsFocusRequester
-                down = weatherFocusRequester
-              }
+            firstItemFocusRequester = whatsNewFocusRequester,
+            upFocusRequester = settingsFocusRequester,
+            downFocusRequester = weatherFocusRequester,
+            leftFocusRequester = kidsCardFocusRequester
           )
           WeatherAlertPanel(
             weather = weather,
@@ -336,13 +337,10 @@ fun FireLiteTvScreen(
             onAlertClick = {
               Toast.makeText(context, "${weather.alertTitle}: ${weather.alertTime}", Toast.LENGTH_SHORT).show()
             },
-            modifier = Modifier
-              .focusRequester(weatherFocusRequester)
-              .focusProperties {
-                up = whatsNewFocusRequester
-                left = seriesFocusRequester
-                down = dockFocusRequester
-              }
+            firstItemFocusRequester = weatherFocusRequester,
+            upFocusRequester = whatsNewFocusRequester,
+            downFocusRequester = dockFocusRequester,
+            leftFocusRequester = seriesCardFocusRequester
           )
         }
       }
@@ -352,13 +350,11 @@ fun FireLiteTvScreen(
     FloatingAppDock(
       apps = dockItems,
       onSelectDockItem = onSelectDockItem,
+      firstItemFocusRequester = dockFocusRequester,
+      upFocusRequester = seriesCardFocusRequester,
       modifier = Modifier
         .align(Alignment.BottomCenter)
         .padding(bottom = 12.dp)
-        .focusRequester(dockFocusRequester)
-        .focusProperties {
-          up = seriesFocusRequester
-        }
     )
 
     // 5. Overlays (Dismissible with Back button)

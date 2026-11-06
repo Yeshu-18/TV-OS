@@ -176,6 +176,7 @@ fun AllAppsOverlay(
         pinnedApps.forEach { (name, pkg, iconRes) ->
           AppItemCard(
             label = name,
+            packageName = pkg,
             iconResName = iconRes,
             isPinned = true,
             onClick = { onLaunchApp(pkg) }
@@ -229,15 +230,20 @@ fun AllAppsOverlay(
 @Composable
 fun AppItemCard(
   label: String,
+  packageName: String? = null,
   iconResName: String? = null,
   appDrawable: android.graphics.drawable.Drawable? = null,
   isPinned: Boolean,
   onClick: () -> Unit,
   modifier: Modifier = Modifier
 ) {
+  val context = LocalContext.current
   val interactionSource = remember { MutableInteractionSource() }
   val isFocused by interactionSource.collectIsFocusedAsState()
 
+  val dynamicIcon = remember(packageName) {
+    com.firelite.tv.util.AppIconLoader.getAppIcon(context, packageName)
+  }
   val iconResId = getDrawableResId(iconResName)
 
   Box(
@@ -252,7 +258,6 @@ fun AppItemCard(
         if (isFocused) Color(0xFF38BDF8) else Color(0x26FFFFFF),
         RoundedCornerShape(12.dp)
       )
-      .focusable(interactionSource = interactionSource)
       .clickable(interactionSource = interactionSource, indication = null) {
         onClick()
       }
@@ -263,7 +268,15 @@ fun AppItemCard(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center
     ) {
-      if (iconResId != null) {
+      if (dynamicIcon != null) {
+        Image(
+          bitmap = dynamicIcon,
+          contentDescription = label,
+          modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(6.dp))
+        )
+      } else if (iconResId != null) {
         Image(
           painter = painterResource(id = iconResId),
           contentDescription = label,

@@ -26,11 +26,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.ChevronRight
@@ -39,7 +39,10 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +54,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -64,18 +70,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.firelite.core.R
 import com.firelite.core.model.AppDockItem
 import com.firelite.core.model.Category
 import com.firelite.core.model.MediaItem
 import com.firelite.core.model.WeatherAlertInfo
 import com.firelite.core.model.WhatsNewItem
 import com.firelite.core.theme.FireLiteMotion
+import com.firelite.tv.util.AppIconLoader
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Resolves bundled drawable resources by name safely.
+ */
 @Composable
 fun getDrawableResId(name: String?): Int? {
   if (name.isNullOrEmpty()) return null
@@ -90,12 +101,16 @@ fun getDrawableResId(name: String?): Int? {
  * Top Bar:
  * Left: "FIRELITE" uppercase brand + "YOUR SHOWS • YOUR WAY"
  * Right: Clock time (10:42 PM) + Date (Thu, 23 Oct) + Glass Search & Settings circular buttons.
- * Optimized with minute-aligned timer (no per-second recompositions).
+ * Direct FocusRequester binding on interactive Search & Settings icons for clean D-pad routing.
  */
 @Composable
 fun TvTopBar(
   onSearchClick: () -> Unit,
   onSettingsClick: () -> Unit,
+  searchFocusRequester: FocusRequester? = null,
+  settingsFocusRequester: FocusRequester? = null,
+  downFocusRequester: FocusRequester? = null,
+  rightRailFocusRequester: FocusRequester? = null,
   modifier: Modifier = Modifier
 ) {
   var currentTime by remember { mutableStateOf("") }
@@ -165,13 +180,25 @@ fun TvTopBar(
       TopBarGlassIconButton(
         icon = Icons.Default.Search,
         contentDescription = "Search",
-        onClick = onSearchClick
+        onClick = onSearchClick,
+        modifier = Modifier
+          .then(if (searchFocusRequester != null) Modifier.focusRequester(searchFocusRequester) else Modifier)
+          .focusProperties {
+            if (settingsFocusRequester != null) right = settingsFocusRequester
+            if (downFocusRequester != null) down = downFocusRequester
+          }
       )
 
       TopBarGlassIconButton(
         icon = Icons.Default.Settings,
         contentDescription = "Settings",
-        onClick = onSettingsClick
+        onClick = onSettingsClick,
+        modifier = Modifier
+          .then(if (settingsFocusRequester != null) Modifier.focusRequester(settingsFocusRequester) else Modifier)
+          .focusProperties {
+            if (searchFocusRequester != null) left = searchFocusRequester
+            if (rightRailFocusRequester != null) down = rightRailFocusRequester
+          }
       )
     }
   }
@@ -224,7 +251,7 @@ fun TopBarGlassIconButton(
 /**
  * 2.5D Pinned Content Card:
  * Hardware-accelerated with graphicsLayer (scale and translationY).
- * Zero layout recalculation during focus animation ensures 60 FPS on Fire TV.
+ * Focus modifiers apply directly to the interactive Box so focus transfers instantly.
  */
 @Composable
 fun PinnedContentCard(
@@ -274,10 +301,10 @@ fun PinnedContentCard(
 
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
-    modifier = modifier.width(cardWidth)
+    modifier = Modifier.width(cardWidth)
   ) {
     Box(
-      modifier = Modifier
+      modifier = modifier
         .size(width = cardWidth, height = cardHeight)
         .graphicsLayer {
           scaleX = scale
@@ -375,7 +402,8 @@ fun PinnedContentCard(
 }
 
 /**
- * Pinned Content Row with Category Header, focusGroup for memory restoration, and Scroll Chevron
+ * Pinned Content Row:
+ * Kids or Series horizontal card list with direct focus routing.
  */
 @Composable
 fun PinnedContentRow(
@@ -383,6 +411,10 @@ fun PinnedContentRow(
   items: List<MediaItem>,
   onSelectItem: (MediaItem) -> Unit,
   onFocusItem: (MediaItem) -> Unit,
+  firstItemFocusRequester: FocusRequester? = null,
+  upFocusRequester: FocusRequester? = null,
+  downFocusRequester: FocusRequester? = null,
+  rightEdgeFocusRequester: FocusRequester? = null,
   onScrollMore: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
@@ -445,18 +477,42 @@ fun PinnedContentRow(
         .fillMaxWidth()
         .focusGroup()
     ) {
-      items(items, key = { it.id }) { item ->
+      itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
+        val cardModifier = Modifier
+          .then(
+            if (index == 0 && firstItemFocusRequester != null) {
+              Modifier.focusRequester(firstItemFocusRequester)
+            } else {
+              Modifier
+            }
+          )
+          .focusProperties {
+            if (upFocusRequester != null) up = upFocusRequester
+            if (downFocusRequester != null) down = downFocusRequester
+            if (index == items.size - 1 && rightEdgeFocusRequester != null) {
+              right = rightEdgeFocusRequester
+            }
+          }
+
         PinnedContentCard(
           item = item,
           category = category,
           onSelect = onSelectItem,
-          onFocus = onFocusItem
+          onFocus = onFocusItem,
+          modifier = cardModifier
         )
       }
 
       // Scroll Chevron at the end of the row
       item {
-        ChevronScrollButton(onClick = onScrollMore)
+        ChevronScrollButton(
+          onClick = onScrollMore,
+          modifier = Modifier.focusProperties {
+            if (upFocusRequester != null) up = upFocusRequester
+            if (downFocusRequester != null) down = downFocusRequester
+            if (rightEdgeFocusRequester != null) right = rightEdgeFocusRequester
+          }
+        )
       }
     }
   }
@@ -498,6 +554,10 @@ fun ChevronScrollButton(
 fun WhatsNewPanel(
   items: List<WhatsNewItem>,
   onSelectItem: (WhatsNewItem) -> Unit = {},
+  firstItemFocusRequester: FocusRequester? = null,
+  upFocusRequester: FocusRequester? = null,
+  downFocusRequester: FocusRequester? = null,
+  leftFocusRequester: FocusRequester? = null,
   modifier: Modifier = Modifier
 ) {
   Box(
@@ -532,21 +592,36 @@ fun WhatsNewPanel(
           )
         }
         Icon(
-          imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+          imageVector = Icons.Default.ChevronRight,
           contentDescription = null,
-          tint = Color(0x80FFFFFF),
-          modifier = Modifier.size(10.dp)
+          tint = Color(0x99D1D5DB),
+          modifier = Modifier.size(14.dp)
         )
       }
 
       Spacer(modifier = Modifier.height(8.dp))
 
-      // Media items
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        items.take(4).forEach { item ->
-          WhatsNewRowItem(
+      // Media Items List
+      Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        items.forEachIndexed { index, item ->
+          val itemModifier = Modifier
+            .then(
+              if (index == 0 && firstItemFocusRequester != null) {
+                Modifier.focusRequester(firstItemFocusRequester)
+              } else {
+                Modifier
+              }
+            )
+            .focusProperties {
+              if (index == 0 && upFocusRequester != null) up = upFocusRequester
+              if (index == items.size - 1 && downFocusRequester != null) down = downFocusRequester
+              if (leftFocusRequester != null) left = leftFocusRequester
+            }
+
+          WhatsNewItemRow(
             item = item,
-            onClick = { onSelectItem(item) }
+            onSelect = { onSelectItem(item) },
+            modifier = itemModifier
           )
         }
       }
@@ -555,38 +630,51 @@ fun WhatsNewPanel(
 }
 
 @Composable
-fun WhatsNewRowItem(
+fun WhatsNewItemRow(
   item: WhatsNewItem,
-  onClick: () -> Unit = {},
+  onSelect: () -> Unit,
   modifier: Modifier = Modifier
 ) {
+  val context = LocalContext.current
   val interactionSource = remember { MutableInteractionSource() }
   val isFocused by interactionSource.collectIsFocusedAsState()
 
   val posterResId = getDrawableResId(item.posterResName)
   val platformIconId = getDrawableResId(item.platformIconResName)
 
+  // Dynamically resolve installed OTT platform icon
+  val platformPkg = when (item.platform) {
+    "Netflix" -> "com.netflix.ninja"
+    "Prime Video" -> "com.amazon.firebat"
+    "JioHotstar" -> "in.startv.hotstar"
+    "YouTube" -> "com.amazon.firetv.youtube"
+    else -> null
+  }
+  val dynamicPlatformIcon = remember(platformPkg) {
+    AppIconLoader.getAppIcon(context, platformPkg)
+  }
+
   Row(
     modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(8.dp))
-      .background(if (isFocused) Color(0x3338BDF8) else Color.Transparent)
+      .background(if (isFocused) Color(0x661E293B) else Color.Transparent)
       .border(
         1.dp,
         if (isFocused) Color(0xFF38BDF8) else Color.Transparent,
         RoundedCornerShape(8.dp)
       )
       .clickable(interactionSource = interactionSource, indication = null) {
-        onClick()
+        onSelect()
       }
-      .padding(horizontal = 4.dp, vertical = 3.dp),
+      .padding(horizontal = 6.dp, vertical = 4.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
-    // Thumbnail (40x30)
+    // Thumbnail Poster
     Box(
       modifier = Modifier
-        .size(width = 38.dp, height = 28.dp)
-        .clip(RoundedCornerShape(6.dp))
+        .size(width = 36.dp, height = 26.dp)
+        .clip(RoundedCornerShape(5.dp))
         .background(Color(0xFF1E293B)),
       contentAlignment = Alignment.Center
     ) {
@@ -620,7 +708,16 @@ fun WhatsNewRowItem(
         overflow = TextOverflow.Ellipsis
       )
       Row(verticalAlignment = Alignment.CenterVertically) {
-        if (platformIconId != null) {
+        if (dynamicPlatformIcon != null) {
+          Image(
+            bitmap = dynamicPlatformIcon,
+            contentDescription = null,
+            modifier = Modifier
+              .size(10.dp)
+              .clip(RoundedCornerShape(2.dp))
+          )
+          Spacer(modifier = Modifier.width(4.dp))
+        } else if (platformIconId != null) {
           Image(
             painter = painterResource(id = platformIconId),
             contentDescription = null,
@@ -647,6 +744,10 @@ fun WeatherAlertPanel(
   weather: WeatherAlertInfo,
   onWeatherClick: () -> Unit = {},
   onAlertClick: () -> Unit = {},
+  firstItemFocusRequester: FocusRequester? = null,
+  upFocusRequester: FocusRequester? = null,
+  downFocusRequester: FocusRequester? = null,
+  leftFocusRequester: FocusRequester? = null,
   modifier: Modifier = Modifier
 ) {
   Row(
@@ -659,21 +760,27 @@ fun WeatherAlertPanel(
     val weatherInteraction = remember { MutableInteractionSource() }
     val isWeatherFocused by weatherInteraction.collectIsFocusedAsState()
 
-    Box(
-      modifier = Modifier
-        .weight(1f)
-        .clip(RoundedCornerShape(14.dp))
-        .background(if (isWeatherFocused) Color(0x551E293B) else Color(0x38121826))
-        .border(
-          1.dp,
-          if (isWeatherFocused) Color(0xFF38BDF8) else Color(0x29FFFFFF),
-          RoundedCornerShape(14.dp)
-        )
-        .clickable(interactionSource = weatherInteraction, indication = null) {
-          onWeatherClick()
-        }
-        .padding(horizontal = 8.dp, vertical = 8.dp)
-    ) {
+    val weatherModifier = Modifier
+      .weight(1f)
+      .then(if (firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
+      .focusProperties {
+        if (upFocusRequester != null) up = upFocusRequester
+        if (downFocusRequester != null) down = downFocusRequester
+        if (leftFocusRequester != null) left = leftFocusRequester
+      }
+      .clip(RoundedCornerShape(14.dp))
+      .background(if (isWeatherFocused) Color(0x551E293B) else Color(0x38121826))
+      .border(
+        1.dp,
+        if (isWeatherFocused) Color(0xFF38BDF8) else Color(0x29FFFFFF),
+        RoundedCornerShape(14.dp)
+      )
+      .clickable(interactionSource = weatherInteraction, indication = null) {
+        onWeatherClick()
+      }
+      .padding(horizontal = 8.dp, vertical = 8.dp)
+
+    Box(modifier = weatherModifier) {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
           imageVector = Icons.Default.Cloud,
@@ -708,21 +815,26 @@ fun WeatherAlertPanel(
     val alertInteraction = remember { MutableInteractionSource() }
     val isAlertFocused by alertInteraction.collectIsFocusedAsState()
 
-    Box(
-      modifier = Modifier
-        .weight(1.3f)
-        .clip(RoundedCornerShape(14.dp))
-        .background(if (isAlertFocused) Color(0x554B1D1D) else Color(0x38351515))
-        .border(
-          1.dp,
-          if (isAlertFocused) Color(0xFFEF4444) else Color(0x40EF4444),
-          RoundedCornerShape(14.dp)
-        )
-        .clickable(interactionSource = alertInteraction, indication = null) {
-          onAlertClick()
-        }
-        .padding(horizontal = 8.dp, vertical = 8.dp)
-    ) {
+    val alertModifier = Modifier
+      .weight(1.3f)
+      .focusProperties {
+        if (upFocusRequester != null) up = upFocusRequester
+        if (downFocusRequester != null) down = downFocusRequester
+        if (leftFocusRequester != null) left = leftFocusRequester
+      }
+      .clip(RoundedCornerShape(14.dp))
+      .background(if (isAlertFocused) Color(0x554B1D1D) else Color(0x38351515))
+      .border(
+        1.dp,
+        if (isAlertFocused) Color(0xFFEF4444) else Color(0x40EF4444),
+        RoundedCornerShape(14.dp)
+      )
+      .clickable(interactionSource = alertInteraction, indication = null) {
+        onAlertClick()
+      }
+      .padding(horizontal = 8.dp, vertical = 8.dp)
+
+    Box(modifier = alertModifier) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -749,17 +861,17 @@ fun WeatherAlertPanel(
               overflow = TextOverflow.Ellipsis
             )
             Text(
-              text = weather.alertTime ?: "6:00 PM – 8:00 PM",
+              text = weather.alertTime ?: "6:00 PM - 8:00 PM",
               fontSize = 8.sp,
-              color = Color(0x99FECACA)
+              color = Color(0xCCF87171)
             )
           }
         }
         Icon(
-          imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+          imageVector = Icons.Default.ChevronRight,
           contentDescription = null,
           tint = Color(0x80EF4444),
-          modifier = Modifier.size(9.dp)
+          modifier = Modifier.size(14.dp)
         )
       }
     }
@@ -770,29 +882,44 @@ fun WeatherAlertPanel(
  * Floating App Dock:
  * Exactly 8 items: JioHotstar, Netflix, Prime Video, YouTube, All Apps, Search, Settings, Screen Mirror.
  * (NO Power on TV dock)
- * Hardware-accelerated with graphicsLayer.
+ * Dynamic app icons loaded directly from PackageManager with bundled fallback.
  */
 @Composable
 fun FloatingAppDock(
   apps: List<AppDockItem>,
   onSelectDockItem: (AppDockItem) -> Unit,
+  firstItemFocusRequester: FocusRequester? = null,
+  upFocusRequester: FocusRequester? = null,
   modifier: Modifier = Modifier
 ) {
-  Box(
+  Row(
     modifier = modifier
-      .clip(RoundedCornerShape(26.dp))
-      .background(Color(0x4D0C101A))
-      .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(26.dp))
+      .clip(RoundedCornerShape(20.dp))
+      .background(Color(0x38121826))
+      .border(1.dp, Color(0x29FFFFFF), RoundedCornerShape(20.dp))
       .focusGroup()
-      .padding(horizontal = 16.dp, vertical = 6.dp)
+      .padding(horizontal = 16.dp, vertical = 6.dp),
+    horizontalArrangement = Arrangement.spacedBy(10.dp),
+    verticalAlignment = Alignment.CenterVertically
   ) {
-    Row(
-      horizontalArrangement = Arrangement.spacedBy(14.dp),
-      verticalAlignment = Alignment.CenterVertically
-    ) {
-      apps.forEach { app ->
-        AppDockButton(app = app, onSelect = { onSelectDockItem(app) })
-      }
+    apps.forEachIndexed { index, app ->
+      val itemModifier = Modifier
+        .then(
+          if (index == 0 && firstItemFocusRequester != null) {
+            Modifier.focusRequester(firstItemFocusRequester)
+          } else {
+            Modifier
+          }
+        )
+        .focusProperties {
+          if (upFocusRequester != null) up = upFocusRequester
+        }
+
+      AppDockButton(
+        app = app,
+        onSelect = { onSelectDockItem(app) },
+        modifier = itemModifier
+      )
     }
   }
 }
@@ -803,6 +930,7 @@ fun AppDockButton(
   onSelect: () -> Unit,
   modifier: Modifier = Modifier
 ) {
+  val context = LocalContext.current
   val interactionSource = remember { MutableInteractionSource() }
   val isFocused by interactionSource.collectIsFocusedAsState()
 
@@ -820,7 +948,15 @@ fun AppDockButton(
     label = "dockBorder"
   )
 
+  // 1. Dynamically fetch real installed application icon / banner from PackageManager
+  val dynamicAppIcon = remember(app.packageName) {
+    AppIconLoader.getAppIcon(context, app.packageName)
+  }
+
+  // 2. Bundled fallback drawable
   val iconResId = getDrawableResId(app.iconResName)
+
+  // 3. System action icons
   val systemIcon: ImageVector? = when (app.actionType) {
     "ALL_APPS" -> Icons.Default.Apps
     "SEARCH" -> Icons.Default.Search
@@ -851,7 +987,16 @@ fun AppDockButton(
         .border(1.2.dp, borderColor, RoundedCornerShape(10.dp)),
       contentAlignment = Alignment.Center
     ) {
-      if (iconResId != null) {
+      if (dynamicAppIcon != null) {
+        Image(
+          bitmap = dynamicAppIcon,
+          contentDescription = app.name,
+          contentScale = ContentScale.Fit,
+          modifier = Modifier
+            .size(26.dp)
+            .clip(RoundedCornerShape(6.dp))
+        )
+      } else if (iconResId != null) {
         Image(
           painter = painterResource(id = iconResId),
           contentDescription = app.name,
@@ -879,9 +1024,8 @@ fun AppDockButton(
     Text(
       text = app.name,
       fontSize = 9.sp,
-      fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Normal,
-      color = if (isFocused) Color(0xFF38BDF8) else Color(0xB3FFFFFF),
-      maxLines = 1
+      fontWeight = if (isFocused) FontWeight.Bold else FontWeight.Medium,
+      color = if (isFocused) Color.White else Color(0xCCD1D5DB)
     )
   }
 }
