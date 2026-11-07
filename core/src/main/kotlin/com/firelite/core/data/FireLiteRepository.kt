@@ -143,7 +143,7 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "POPULAR",
         rating = "TV-Y7",
         accentColorHex = 0xFF00A3FF,
-        contentUrl = "https://www.hotstar.com/in/shows/doraemon/17621",
+        contentUrl = "https://www.hotstar.com/in/shows/doraemon/1260021004",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Doraemon",
         deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_doraemon",
@@ -159,7 +159,7 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "FUN",
         rating = "TV-PG",
         accentColorHex = 0xFFEF4444,
-        contentUrl = "https://www.hotstar.com/in/shows/shinchan/1260000030",
+        contentUrl = "https://www.hotstar.com/in/shows/shinchan/1260020929",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Shinchan",
         deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_shinchan"
@@ -187,7 +187,7 @@ class FireLiteRepository(private val context: Context? = null) {
         durationOrEpisodes = "Season 10",
         rating = "TV-Y",
         accentColorHex = 0xFFF59E0B,
-        contentUrl = "https://www.hotstar.com/in/shows/motu-patlu/1260005510",
+        contentUrl = "https://www.hotstar.com/in/shows/motu-patlu/1971003164",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Motu+Patlu",
         deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_motu_patlu"
@@ -234,7 +234,7 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "NEW EPISODES",
         rating = "TV-14",
         accentColorHex = 0xFFF43F5E,
-        contentUrl = "https://www.hotstar.com/in/shows/heart-beat/1271302824",
+        contentUrl = "https://www.hotstar.com/in/shows/heart-beat/1260168231",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Heart+Beat",
         deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_heart_beat"
@@ -264,7 +264,7 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "PRIME TIME",
         rating = "TV-PG",
         accentColorHex = 0xFF06B6D4,
-        contentUrl = "https://www.hotstar.com/in/shows/siragadikka-aasai/1260127599",
+        contentUrl = "https://www.hotstar.com/in/shows/siragadikka-aasai/1260129356",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Siragadikka+Aasai",
         deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_siragadikka"

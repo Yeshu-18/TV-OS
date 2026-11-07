@@ -1167,3 +1167,154 @@ fun TvAppTile(
   }
 }
 
+/**
+ * Apple TV Style Pinned Content Card:
+ * Landscape 148dp x 88dp card with poster artwork, platform badge, spring physics, and zero-recomposition RenderThread graphicsLayer.
+ */
+@Composable
+fun TvContentCard(
+  item: MediaItem,
+  onSelect: (MediaItem) -> Unit,
+  onFocus: (MediaItem) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val interactionSource = remember { MutableInteractionSource() }
+  val isFocused by interactionSource.collectIsFocusedAsState()
+
+  val scaleAnim = remember { androidx.compose.animation.core.Animatable(1.0f) }
+  val glowAnim = remember { androidx.compose.animation.core.Animatable(0.0f) }
+
+  LaunchedEffect(isFocused) {
+    if (isFocused) onFocus(item)
+    launch {
+      scaleAnim.animateTo(
+        targetValue = if (isFocused) 1.10f else 1.0f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 420f)
+      )
+    }
+    launch {
+      glowAnim.animateTo(
+        targetValue = if (isFocused) 1.0f else 0.0f,
+        animationSpec = tween(140)
+      )
+    }
+  }
+
+  val artworkResId = getDrawableResId(item.artworkResName)
+
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    modifier = modifier
+      .width(148.dp)
+      .graphicsLayer {
+        val s = scaleAnim.value
+        scaleX = s
+        scaleY = s
+        translationY = if (s > 1.0f) (-5.dp.toPx() * ((s - 1.0f) / 0.10f)) else 0f
+      }
+      .clickable(interactionSource = interactionSource, indication = null) {
+        onSelect(item)
+      }
+  ) {
+    Box(
+      modifier = Modifier
+        .size(width = 148.dp, height = 88.dp)
+        .drawBehind {
+          val glow = glowAnim.value
+          if (glow > 0.01f) {
+            drawRoundRect(
+              color = Color(item.accentColorHex).copy(alpha = 0.40f * glow),
+              cornerRadius = CornerRadius(16.dp.toPx()),
+              size = Size(size.width + 10.dp.toPx() * glow, size.height + 10.dp.toPx() * glow),
+              topLeft = Offset(-5.dp.toPx() * glow, -5.dp.toPx() * glow)
+            )
+          }
+        }
+        .clip(RoundedCornerShape(14.dp))
+        .background(Color(0xFF131722))
+        .border(
+          width = if (isFocused) 2.dp else 1.dp,
+          color = if (isFocused) Color(0xFF38BDF8) else Color(0x22FFFFFF),
+          shape = RoundedCornerShape(14.dp)
+        )
+    ) {
+      if (artworkResId != null) {
+        Image(
+          painter = painterResource(id = artworkResId),
+          contentDescription = item.title,
+          contentScale = ContentScale.Crop,
+          modifier = Modifier.fillMaxSize()
+        )
+      } else {
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .background(
+              Brush.verticalGradient(
+                colors = listOf(
+                  Color(item.accentColorHex).copy(alpha = 0.5f),
+                  Color(0xFF0F172A)
+                )
+              )
+            ),
+          contentAlignment = Alignment.Center
+        ) {
+          Text(
+            text = item.title.take(2).uppercase(),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
+          )
+        }
+      }
+
+      // Platform badge at top-right
+      Box(
+        modifier = Modifier
+          .align(Alignment.TopEnd)
+          .padding(6.dp)
+          .clip(RoundedCornerShape(4.dp))
+          .background(Color(0xB3000000))
+          .padding(horizontal = 6.dp, vertical = 2.dp)
+      ) {
+        Text(
+          text = item.platform,
+          fontSize = 8.sp,
+          fontWeight = FontWeight.Bold,
+          color = Color.White
+        )
+      }
+
+      // Duration or Episode badge at bottom-left if present
+      if (!item.durationOrEpisodes.isNullOrEmpty()) {
+        Box(
+          modifier = Modifier
+            .align(Alignment.BottomStart)
+            .padding(6.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0x99000000))
+            .padding(horizontal = 5.dp, vertical = 2.dp)
+        ) {
+          Text(
+            text = item.durationOrEpisodes,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color(0xEEFFFFFF)
+          )
+        }
+      }
+    }
+
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+      text = item.title,
+      fontSize = 12.sp,
+      fontWeight = if (isFocused) FontWeight.Bold else FontWeight.Medium,
+      color = if (isFocused) Color.White else Color(0xCCD1D5DB),
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+  }
+}
+
+

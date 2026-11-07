@@ -2,6 +2,7 @@ package com.firelite.tv.ui
 
 import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -18,21 +19,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -46,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.firelite.core.data.FireLiteRepository
+import com.firelite.core.model.MediaItem
 import com.firelite.tv.util.TvAppItem
 import com.firelite.tv.util.TvAppManager
 import kotlinx.coroutines.delay
@@ -65,24 +71,47 @@ fun FireLiteTvScreen(
 ) {
   val context = LocalContext.current
 
+  val kidsItems by repository.kidsItems.collectAsState()
+  val seriesItems by repository.seriesItems.collectAsState()
+  val pinnedItems = remember(kidsItems, seriesItems) { kidsItems + seriesItems }
+
   var overlayState by remember { mutableStateOf(TvOverlayState.NONE) }
   var appList by remember { mutableStateOf(TvAppManager.getInstantFallbackApps()) }
-  var focusedApp by remember { mutableStateOf<TvAppItem?>(appList.firstOrNull()) }
 
-  val listState = rememberLazyListState()
+  var focusedApp by remember { mutableStateOf<TvAppItem?>(appList.firstOrNull()) }
+  var focusedMedia by remember { mutableStateOf<MediaItem?>(null) }
+
+  val appsListState = rememberLazyListState()
+  val contentListState = rememberLazyListState()
 
   // Smooth automatic centering of the focused app during D-pad navigation
   LaunchedEffect(focusedApp) {
-    val idx = appList.indexOf(focusedApp)
-    if (idx >= 0) {
-      listState.animateScrollToItem(
-        index = (idx - 1).coerceAtLeast(0),
-        scrollOffset = -60
-      )
+    if (focusedApp != null) {
+      val idx = appList.indexOf(focusedApp)
+      if (idx >= 0) {
+        appsListState.animateScrollToItem(
+          index = (idx - 1).coerceAtLeast(0),
+          scrollOffset = -60
+        )
+      }
+    }
+  }
+
+  // Smooth automatic centering of the focused pinned show
+  LaunchedEffect(focusedMedia) {
+    if (focusedMedia != null) {
+      val idx = pinnedItems.indexOf(focusedMedia)
+      if (idx >= 0) {
+        contentListState.animateScrollToItem(
+          index = (idx - 1).coerceAtLeast(0),
+          scrollOffset = -60
+        )
+      }
     }
   }
 
   val firstAppFocusRequester = remember { FocusRequester() }
+  val firstContentFocusRequester = remember { FocusRequester() }
   val settingsFocusRequester = remember { FocusRequester() }
 
   // 1. Asynchronously pre-warm & resolve all installed apps in parallel on background thread
@@ -91,7 +120,7 @@ fun FireLiteTvScreen(
       val resolved = TvAppManager.resolveInstalledAppsParallel(context)
       if (resolved.isNotEmpty()) {
         appList = resolved
-        if (focusedApp == null) {
+        if (focusedApp == null && focusedMedia == null) {
           focusedApp = resolved.firstOrNull()
         }
       }
@@ -123,6 +152,43 @@ fun FireLiteTvScreen(
       true
     } catch (_: Exception) {
       false
+    }
+  }
+
+  // Couch-TV direct content deep link launcher with task-clearing flags
+  fun launchContent(item: MediaItem) {
+    val contentUrl = item.contentUrl
+    val pkg = item.deepLinkPackage
+    var started = false
+
+    if (!contentUrl.isNullOrEmpty()) {
+      try {
+        val intent = if (contentUrl.startsWith("intent:")) {
+          Intent.parseUri(contentUrl, Intent.URI_INTENT_SCHEME)
+        } else {
+          Intent(Intent.ACTION_VIEW, Uri.parse(contentUrl))
+        }
+        if (!pkg.isNullOrEmpty()) {
+          intent.setPackage(pkg)
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        context.startActivity(intent)
+        started = true
+      } catch (_: Exception) {}
+    }
+
+    if (!started && !pkg.isNullOrEmpty()) {
+      val pm = context.packageManager
+      val fallback = pm.getLeanbackLaunchIntentForPackage(pkg) ?: pm.getLaunchIntentForPackage(pkg)
+      if (fallback != null) {
+        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        context.startActivity(fallback)
+        started = true
+      }
+    }
+
+    if (!started) {
+      Toast.makeText(context, "Opening ${item.title} on ${item.platform}", Toast.LENGTH_SHORT).show()
     }
   }
 
@@ -178,20 +244,37 @@ fun FireLiteTvScreen(
     }
   }
 
-  // Pure GPU RenderThread Animation (Zero Recomposition of Children)
-  val activeColor = focusedApp?.brandColor ?: Color(0xFF0F1F38)
+  // Dynamic Apple TV ambient background color matching either the focused app or focused show
+  val activeColor = when {
+    focusedMedia != null -> Color(focusedMedia!!.accentColorHex)
+    focusedApp != null -> focusedApp!!.brandColor
+    else -> Color(0xFF0F1F38)
+  }
+
   val ambientAnim = remember { Animatable(activeColor) }
   LaunchedEffect(activeColor) {
     ambientAnim.animateTo(
       targetValue = activeColor,
-      animationSpec = tween(durationMillis = 150) // Snappy 150ms crossfade
+      animationSpec = tween(durationMillis = 150)
     )
+  }
+
+  // Dynamic spotlight text
+  val spotlightTitle = when {
+    focusedMedia != null -> focusedMedia!!.title.uppercase()
+    focusedApp != null -> focusedApp!!.name.uppercase()
+    else -> "APPLICATIONS"
+  }
+  val spotlightSubtitle = when {
+    focusedMedia != null -> "${focusedMedia!!.platform} • ${focusedMedia!!.subtitle}"
+    focusedApp != null -> focusedApp!!.tagline
+    else -> "Use D-Pad to browse • Press OK to open"
   }
 
   Box(
     modifier = modifier
       .fillMaxSize()
-      .background(Color(0xFF040608)) // Pure deep black
+      .background(Color(0xFF040608)) // Pure deep OLED black
       .drawBehind {
         val c = ambientAnim.value
         drawRect(
@@ -221,7 +304,7 @@ fun FireLiteTvScreen(
     Column(
       modifier = Modifier
         .fillMaxSize()
-        .padding(horizontal = 48.dp, vertical = 26.dp)
+        .padding(horizontal = 48.dp, vertical = 22.dp)
     ) {
       // Top Bar: Clean Brand on Left, Digital Clock, Date & Bare Settings Icon on Right
       TvTopBar(
@@ -233,35 +316,48 @@ fun FireLiteTvScreen(
         downFocusRequester = firstAppFocusRequester
       )
 
-      Spacer(modifier = Modifier.weight(0.20f))
+      Spacer(modifier = Modifier.height(14.dp))
 
-      // Apple TV Style Active App Spotlight (Instantaneous text update, 0 animation overhead)
+      // Apple TV Style Active Spotlight Header (Instantaneous text update, zero recomposition overhead)
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(start = 6.dp, bottom = 18.dp)
+          .padding(start = 6.dp, bottom = 12.dp)
       ) {
         Text(
-          text = focusedApp?.name?.uppercase() ?: "APPLICATIONS",
-          fontSize = 24.sp,
+          text = spotlightTitle,
+          fontSize = 22.sp,
           fontWeight = FontWeight.Black,
           color = Color.White,
-          letterSpacing = 2.sp
+          letterSpacing = 1.8.sp
         )
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(3.dp))
         Text(
-          text = focusedApp?.tagline ?: "Use D-Pad to browse • Press OK to open",
-          fontSize = 13.sp,
+          text = spotlightSubtitle,
+          fontSize = 12.sp,
           fontWeight = FontWeight.Normal,
           color = Color(0xBBFFFFFF)
         )
       }
 
-      // Horizontal Row of TV App Cards with Smooth Auto-Scroll
+      // SECTION 1: APPLICATIONS
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
+      ) {
+        Text(
+          text = "APPLICATIONS",
+          fontSize = 13.sp,
+          fontWeight = FontWeight.Bold,
+          color = Color.White,
+          letterSpacing = 1.2.sp
+        )
+      }
+
       LazyRow(
-        state = listState,
-        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        state = appsListState,
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxWidth()
       ) {
         itemsIndexed(appList, key = { _, item -> item.id }) { index, app ->
@@ -272,10 +368,12 @@ fun FireLiteTvScreen(
             )
             .focusProperties {
               up = settingsFocusRequester
+              down = firstContentFocusRequester
             }
             .onFocusChanged { focusState ->
               if (focusState.isFocused) {
                 focusedApp = app
+                focusedMedia = null
               }
             }
 
@@ -296,7 +394,71 @@ fun FireLiteTvScreen(
         }
       }
 
-      Spacer(modifier = Modifier.weight(0.35f))
+      Spacer(modifier = Modifier.height(14.dp))
+
+      // SECTION 2: PINNED CONTENT ("MY FAVOURITES")
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
+      ) {
+        Text(
+          text = "PINNED SHOWS",
+          fontSize = 13.sp,
+          fontWeight = FontWeight.Bold,
+          color = Color.White,
+          letterSpacing = 1.2.sp
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Box(
+          modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0x3338BDF8))
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+        ) {
+          Text(
+            text = "${pinnedItems.size} TITLES",
+            fontSize = 9.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF38BDF8)
+          )
+        }
+      }
+
+      LazyRow(
+        state = contentListState,
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxWidth()
+      ) {
+        itemsIndexed(pinnedItems, key = { _, item -> item.id }) { index, mediaItem ->
+          val contentTileModifier = Modifier
+            .then(
+              if (index == 0) Modifier.focusRequester(firstContentFocusRequester)
+              else Modifier
+            )
+            .focusProperties {
+              up = firstAppFocusRequester
+            }
+            .onFocusChanged { focusState ->
+              if (focusState.isFocused) {
+                focusedMedia = mediaItem
+                focusedApp = null
+              }
+            }
+
+          TvContentCard(
+            item = mediaItem,
+            onSelect = { launchContent(mediaItem) },
+            onFocus = {
+              focusedMedia = mediaItem
+              focusedApp = null
+            },
+            modifier = contentTileModifier
+          )
+        }
+      }
+
+      Spacer(modifier = Modifier.weight(1f))
 
       // Clean Minimalist Remote Hint at Bottom
       Row(
@@ -305,8 +467,8 @@ fun FireLiteTvScreen(
         verticalAlignment = Alignment.CenterVertically
       ) {
         Text(
-          text = "FireLite • 60 FPS Fluid Engine • Zero Ads",
-          fontSize = 11.sp,
+          text = "FireLite • Apple TV Fluid Engine • D-Pad to Navigate • OK to Play",
+          fontSize = 10.sp,
           color = Color(0x33FFFFFF),
           fontWeight = FontWeight.Medium
         )
