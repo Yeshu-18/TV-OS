@@ -19,7 +19,7 @@ import org.json.JSONObject
 object TvWatchNextManager {
   private const val TAG = "TvWatchNextManager"
   private const val PREFS_NAME = "firelite_continue_watching"
-  private const val KEY_CW_ITEMS = "continue_watching_items_v1"
+  private const val KEY_CW_ITEMS = "continue_watching_items_v4"
   private val WATCH_NEXT_URI = Uri.parse("content://android.media.tv/watch_next_program")
 
   private val PROJECTION = arrayOf(
@@ -136,6 +136,25 @@ object TvWatchNextManager {
       saveLocalHistory(context, items)
     }
 
+    // Always guarantee that "I'm Game" and user's actual watched titles are at the top
+    val initialTitles = getInitialContinueWatchingItems()
+    val imGame = initialTitles.firstOrNull { it.contentId == "1271354531" } ?: initialTitles[0]
+    val bittu = initialTitles.firstOrNull { it.id == "cw_bittu_bahanebaaz" }
+
+    // Ensure I'm Game is at index 0
+    val existingImGameIdx = items.indexOfFirst { it.contentId == "1271354531" || it.title.contains("I'm Game", ignoreCase = true) }
+    if (existingImGameIdx > 0) {
+      val found = items.removeAt(existingImGameIdx)
+      items.add(0, found)
+    } else if (existingImGameIdx < 0) {
+      items.add(0, imGame)
+    }
+
+    // Ensure Bittu Bahanebaaz is right behind I'm Game if present
+    if (bittu != null && items.none { it.title.contains("Bittu", ignoreCase = true) }) {
+      items.add(1.coerceAtMost(items.size), bittu)
+    }
+
     items
   }
 
@@ -226,9 +245,45 @@ object TvWatchNextManager {
   }
 
   /**
-   * Initial high-quality verified JioHotstar & streaming titles with progress bars.
+   * Initial high-quality verified JioHotstar & streaming titles matching user's actual watched content.
    */
   fun getInitialContinueWatchingItems(): List<MediaItem> = listOf(
+    MediaItem(
+      id = "cw_im_game",
+      title = "I'm Game",
+      category = Category.SERIES,
+      platform = "JioHotstar",
+      subtitle = "Action Thriller • Tamil • 35m left",
+      durationOrEpisodes = "35m left",
+      badge = "CONTINUE",
+      rating = "UA 16+",
+      accentColorHex = 0xFF00A3FF,
+      contentId = "1271354531",
+      contentUrl = "https://www.hotstar.com/in/movies/im-game/1271354531",
+      fallbackUrl = "https://www.hotstar.com/in/explore?search_query=I%27m+Game",
+      deepLinkPackage = "in.startv.hotstar",
+      artworkResName = "art_im_game",
+      playbackProgress = 0.74f,
+      episodeTitle = "35m left"
+    ),
+    MediaItem(
+      id = "cw_bittu_bahanebaaz",
+      title = "Bittu Bahanebaaz",
+      category = Category.KIDS,
+      platform = "JioHotstar",
+      subtitle = "Ek Ka Teen • Tamil • 35m left",
+      durationOrEpisodes = "35m left",
+      badge = "CONTINUE",
+      rating = "TV-Y7",
+      accentColorHex = 0xFF00A3FF,
+      contentId = "bittu_bahanebaaz",
+      contentUrl = "https://www.hotstar.com/in/explore?search_query=Bittu+Bahanebaaz",
+      fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Bittu+Bahanebaaz",
+      deepLinkPackage = "in.startv.hotstar",
+      artworkResName = "art_bittu_bahanebaaz",
+      playbackProgress = 0.60f,
+      episodeTitle = "Ek Ka Teen"
+    ),
     MediaItem(
       id = "cw_heart_beat",
       title = "Heart Beat",
@@ -264,42 +319,6 @@ object TvWatchNextManager {
       artworkResName = "art_the_court",
       playbackProgress = 0.42f,
       episodeTitle = "Cross Examination"
-    ),
-    MediaItem(
-      id = "cw_shinchan",
-      title = "Shinchan",
-      category = Category.KIDS,
-      platform = "JioHotstar",
-      subtitle = "S8 E14 • Action Mask vs Evil",
-      durationOrEpisodes = "S8 E14",
-      badge = "RESUME",
-      rating = "TV-PG",
-      accentColorHex = 0xFFEF4444,
-      contentId = "1260020929",
-      contentUrl = "https://www.hotstar.com/in/shows/shin-chan/1260020929",
-      fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Shinchan",
-      deepLinkPackage = "in.startv.hotstar",
-      artworkResName = "art_shinchan",
-      playbackProgress = 0.80f,
-      episodeTitle = "Action Mask vs Evil"
-    ),
-    MediaItem(
-      id = "cw_ayyanar_thunai",
-      title = "Ayyanar Thunai",
-      category = Category.SERIES,
-      platform = "JioHotstar",
-      subtitle = "S1 E5 • The Village Council",
-      durationOrEpisodes = "S1 E5",
-      badge = "RESUME",
-      rating = "TV-14",
-      accentColorHex = 0xFF00A3FF,
-      contentId = "1271388570",
-      contentUrl = "https://www.hotstar.com/in/shows/ayyanar-thunai/1271388570",
-      fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Ayyanar+Thunai",
-      deepLinkPackage = "in.startv.hotstar",
-      artworkResName = "art_ayyanar_thunai",
-      playbackProgress = 0.35f,
-      episodeTitle = "The Village Council"
     ),
     MediaItem(
       id = "cw_doraemon",
