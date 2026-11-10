@@ -17,6 +17,32 @@ import java.util.concurrent.ConcurrentHashMap
 object AppIconLoader {
 
   private val cache = ConcurrentHashMap<String, ImageBitmap>()
+  private val posterCache = ConcurrentHashMap<String, ImageBitmap>()
+
+  fun getPosterBitmap(context: Context, urlOrUri: String?): ImageBitmap? {
+    if (urlOrUri.isNullOrEmpty()) return null
+    posterCache[urlOrUri]?.let { return it }
+
+    try {
+      val uri = android.net.Uri.parse(urlOrUri)
+      val stream = if (urlOrUri.startsWith("content://") || urlOrUri.startsWith("android.resource://")) {
+        context.contentResolver.openInputStream(uri)
+      } else if (urlOrUri.startsWith("http://") || urlOrUri.startsWith("https://")) {
+        java.net.URL(urlOrUri).openStream()
+      } else null
+
+      stream?.use { input ->
+        val bmp = android.graphics.BitmapFactory.decodeStream(input)
+        if (bmp != null) {
+          val imgBmp = bmp.asImageBitmap()
+          posterCache[urlOrUri] = imgBmp
+          return imgBmp
+        }
+      }
+    } catch (_: Exception) {}
+
+    return null
+  }
 
   fun getAppIcon(context: Context, packageName: String?): ImageBitmap? {
     if (packageName.isNullOrEmpty()) return null

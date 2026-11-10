@@ -24,7 +24,11 @@ data class MediaItem(
   val fallbackUrl: String? = null,
   val artworkResName: String? = null,
   val bannerResName: String? = null,
-  val characterResName: String? = null
+  val characterResName: String? = null,
+  val contentId: String? = null,
+  val posterUrl: String? = null,
+  val playbackProgress: Float? = null,
+  val episodeTitle: String? = null
 )
 
 @Serializable

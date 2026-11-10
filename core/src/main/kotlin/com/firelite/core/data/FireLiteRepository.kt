@@ -134,7 +134,7 @@ class FireLiteRepository(private val context: Context? = null) {
   companion object {
     fun initialKidsItems(): List<MediaItem> = listOf(
       MediaItem(
-        id = "k1",
+        id = "doraemon",
         title = "Doraemon",
         category = Category.KIDS,
         platform = "JioHotstar",
@@ -143,6 +143,7 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "POPULAR",
         rating = "TV-Y7",
         accentColorHex = 0xFF00A3FF,
+        contentId = "1260021004",
         contentUrl = "https://www.hotstar.com/in/shows/doraemon/1260021004",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Doraemon",
         deepLinkPackage = "in.startv.hotstar",
@@ -150,7 +151,7 @@ class FireLiteRepository(private val context: Context? = null) {
         characterResName = "art_doraemon_char"
       ),
       MediaItem(
-        id = "k2",
+        id = "shinchan",
         title = "Shinchan",
         category = Category.KIDS,
         platform = "JioHotstar",
@@ -159,7 +160,8 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "FUN",
         rating = "TV-PG",
         accentColorHex = 0xFFEF4444,
-        contentUrl = "https://www.hotstar.com/in/shows/shinchan/1260020929",
+        contentId = "1260020929",
+        contentUrl = "https://www.hotstar.com/in/shows/shin-chan/1260020929",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Shinchan",
         deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_shinchan"
@@ -225,7 +227,7 @@ class FireLiteRepository(private val context: Context? = null) {
 
     fun initialSeriesItems(): List<MediaItem> = listOf(
       MediaItem(
-        id = "s1",
+        id = "heart_beat",
         title = "Heart Beat",
         category = Category.SERIES,
         platform = "JioHotstar",
@@ -234,24 +236,26 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "NEW EPISODES",
         rating = "TV-14",
         accentColorHex = 0xFFF43F5E,
+        contentId = "1260168231",
         contentUrl = "https://www.hotstar.com/in/shows/heart-beat/1260168231",
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Heart+Beat",
         deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_heart_beat"
       ),
       MediaItem(
-        id = "s2",
+        id = "the_court",
         title = "The Court",
         category = Category.SERIES,
-        platform = "Netflix",
+        platform = "JioHotstar",
         subtitle = "Legal Drama",
         durationOrEpisodes = "Limited Series",
         badge = "TOP 10",
         rating = "TV-MA",
         accentColorHex = 0xFFEAB308,
-        contentUrl = "https://www.netflix.com/title/81435689",
-        fallbackUrl = "netflix://title/81435689",
-        deepLinkPackage = "com.netflix.ninja",
+        contentId = "1271672560",
+        contentUrl = "https://www.hotstar.com/in/shows/the-court/1271672560",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=The+Court",
+        deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_the_court"
       ),
       MediaItem(
@@ -270,18 +274,19 @@ class FireLiteRepository(private val context: Context? = null) {
         artworkResName = "art_siragadikka"
       ),
       MediaItem(
-        id = "s4",
+        id = "ayyanar_thunai",
         title = "Ayyanar Thunai",
         category = Category.SERIES,
-        platform = "Sun NXT",
+        platform = "JioHotstar",
         subtitle = "Village Chronicle",
-        durationOrEpisodes = "Ep 42",
+        durationOrEpisodes = "Latest Episodes",
         badge = "TRENDING",
         rating = "TV-14",
         accentColorHex = 0xFF10B981,
-        contentUrl = "sunnxt://deeplink?content_id=ayyanar_thunai",
-        fallbackUrl = "https://www.sunnxt.com",
-        deepLinkPackage = "com.suntv.sunnxt",
+        contentId = "1271388570",
+        contentUrl = "https://www.hotstar.com/in/shows/ayyanar-thunai/1271388570",
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Ayyanar+Thunai",
+        deepLinkPackage = "in.startv.hotstar",
         artworkResName = "art_ayyanar"
       ),
       MediaItem(

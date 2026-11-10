@@ -74,6 +74,7 @@ fun FireLiteTvScreen(
   val kidsItems by repository.kidsItems.collectAsState()
   val seriesItems by repository.seriesItems.collectAsState()
   val pinnedItems = remember(kidsItems, seriesItems) { kidsItems + seriesItems }
+  var watchNextItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
 
   var overlayState by remember { mutableStateOf(TvOverlayState.NONE) }
   var appList by remember { mutableStateOf(TvAppManager.getInstantFallbackApps()) }
@@ -82,6 +83,7 @@ fun FireLiteTvScreen(
   var focusedMedia by remember { mutableStateOf<MediaItem?>(null) }
 
   val appsListState = rememberLazyListState()
+  val watchNextListState = rememberLazyListState()
   val contentListState = rememberLazyListState()
 
   // Smooth automatic centering of the focused app during D-pad navigation
@@ -97,9 +99,16 @@ fun FireLiteTvScreen(
     }
   }
 
-  // Smooth automatic centering of the focused pinned show
+  // Smooth automatic centering of the focused pinned show or watch-next item
   LaunchedEffect(focusedMedia) {
     if (focusedMedia != null) {
+      val wnIdx = watchNextItems.indexOf(focusedMedia)
+      if (wnIdx >= 0) {
+        watchNextListState.animateScrollToItem(
+          index = (wnIdx - 1).coerceAtLeast(0),
+          scrollOffset = -60
+        )
+      }
       val idx = pinnedItems.indexOf(focusedMedia)
       if (idx >= 0) {
         contentListState.animateScrollToItem(
@@ -111,10 +120,21 @@ fun FireLiteTvScreen(
   }
 
   val firstAppFocusRequester = remember { FocusRequester() }
+  val firstWatchNextFocusRequester = remember { FocusRequester() }
   val firstContentFocusRequester = remember { FocusRequester() }
   val settingsFocusRequester = remember { FocusRequester() }
 
-  // 1. Asynchronously pre-warm & resolve all installed apps in parallel on background thread
+  // 1. Asynchronously load native Android TV / Fire OS Watch Next rows
+  LaunchedEffect(Unit) {
+    try {
+      val wn = com.firelite.tv.util.TvWatchNextManager.loadWatchNextItems(context)
+      if (wn.isNotEmpty()) {
+        watchNextItems = wn
+      }
+    } catch (_: Exception) {}
+  }
+
+  // 2. Asynchronously pre-warm & resolve all installed apps in parallel on background thread
   LaunchedEffect(Unit) {
     try {
       val resolved = TvAppManager.resolveInstalledAppsParallel(context)
@@ -127,7 +147,7 @@ fun FireLiteTvScreen(
     } catch (_: Exception) {}
   }
 
-  // 2. Request initial D-pad focus on frame 0
+  // 3. Request initial D-pad focus on frame 0
   LaunchedEffect(Unit) {
     delay(50)
     try {
@@ -158,7 +178,7 @@ fun FireLiteTvScreen(
   // Couch-TV direct content deep link launcher with task-clearing flags
   fun launchContent(item: MediaItem) {
     val contentUrl = item.contentUrl
-    val pkg = item.deepLinkPackage
+    val pkg = item.deepLinkPackage ?: (if (!contentUrl.isNullOrEmpty()) com.firelite.tv.util.TvWatchNextManager.packageForUrl(contentUrl) else null)
     var started = false
 
     if (!contentUrl.isNullOrEmpty()) {
@@ -368,7 +388,7 @@ fun FireLiteTvScreen(
             )
             .focusProperties {
               up = settingsFocusRequester
-              down = firstContentFocusRequester
+              down = if (watchNextItems.isNotEmpty()) firstWatchNextFocusRequester else firstContentFocusRequester
             }
             .onFocusChanged { focusState ->
               if (focusState.isFocused) {
@@ -395,6 +415,73 @@ fun FireLiteTvScreen(
       }
 
       Spacer(modifier = Modifier.height(14.dp))
+
+      // SECTION: CONTINUE WATCHING (Android TV / Fire OS Watch Next)
+      if (watchNextItems.isNotEmpty()) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
+        ) {
+          Text(
+            text = "CONTINUE WATCHING",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            letterSpacing = 1.2.sp
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(4.dp))
+              .background(Color(0x3310B981))
+              .padding(horizontal = 6.dp, vertical = 1.dp)
+          ) {
+            Text(
+              text = "${watchNextItems.size} IN PROGRESS",
+              fontSize = 9.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = Color(0xFF10B981)
+            )
+          }
+        }
+
+        LazyRow(
+          state = watchNextListState,
+          contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+          horizontalArrangement = Arrangement.spacedBy(14.dp),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          itemsIndexed(watchNextItems, key = { _, item -> item.id }) { index, wnItem ->
+            val wnTileModifier = Modifier
+              .then(
+                if (index == 0) Modifier.focusRequester(firstWatchNextFocusRequester)
+                else Modifier
+              )
+              .focusProperties {
+                up = firstAppFocusRequester
+                down = firstContentFocusRequester
+              }
+              .onFocusChanged { focusState ->
+                if (focusState.isFocused) {
+                  focusedMedia = wnItem
+                  focusedApp = null
+                }
+              }
+
+            TvContentCard(
+              item = wnItem,
+              onSelect = { launchContent(wnItem) },
+              onFocus = {
+                focusedMedia = wnItem
+                focusedApp = null
+              },
+              modifier = wnTileModifier
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+      }
 
       // SECTION 2: PINNED CONTENT ("MY FAVOURITES")
       Row(
@@ -437,7 +524,7 @@ fun FireLiteTvScreen(
               else Modifier
             )
             .focusProperties {
-              up = firstAppFocusRequester
+              up = if (watchNextItems.isNotEmpty()) firstWatchNextFocusRequester else firstAppFocusRequester
             }
             .onFocusChanged { focusState ->
               if (focusState.isFocused) {

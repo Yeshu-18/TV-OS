@@ -76,6 +76,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import com.firelite.core.R
 import com.firelite.core.model.AppDockItem
 import com.firelite.core.model.Category
@@ -1200,7 +1201,20 @@ fun TvContentCard(
     }
   }
 
+  val context = LocalContext.current
   val artworkResId = getDrawableResId(item.artworkResName)
+  var posterBitmap by remember(item.posterUrl) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+
+  LaunchedEffect(item.posterUrl) {
+    if (!item.posterUrl.isNullOrEmpty()) {
+      launch(Dispatchers.IO) {
+        val loaded = AppIconLoader.getPosterBitmap(context, item.posterUrl)
+        if (loaded != null) {
+          posterBitmap = loaded
+        }
+      }
+    }
+  }
 
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1238,7 +1252,14 @@ fun TvContentCard(
           shape = RoundedCornerShape(14.dp)
         )
     ) {
-      if (artworkResId != null) {
+      if (posterBitmap != null) {
+        Image(
+          bitmap = posterBitmap!!,
+          contentDescription = item.title,
+          contentScale = ContentScale.Crop,
+          modifier = Modifier.fillMaxSize()
+        )
+      } else if (artworkResId != null) {
         Image(
           painter = painterResource(id = artworkResId),
           contentDescription = item.title,
@@ -1262,6 +1283,25 @@ fun TvContentCard(
           Text(
             text = item.title.take(2).uppercase(),
             fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
+          )
+        }
+      }
+
+      // Resume badge at top-left if present
+      if (item.badge == "RESUME") {
+        Box(
+          modifier = Modifier
+            .align(Alignment.TopStart)
+            .padding(6.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xE610B981))
+            .padding(horizontal = 5.dp, vertical = 2.dp)
+        ) {
+          Text(
+            text = "CONTINUE",
+            fontSize = 7.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White
           )
@@ -1300,6 +1340,25 @@ fun TvContentCard(
             fontSize = 8.sp,
             fontWeight = FontWeight.Medium,
             color = Color(0xEEFFFFFF)
+          )
+        }
+      }
+
+      // Playback progress bar at bottom of the card
+      val progress = item.playbackProgress
+      if (progress != null && progress > 0f) {
+        Box(
+          modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .height(3.dp)
+            .background(Color(0x77000000))
+        ) {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth(fraction = progress.coerceIn(0f, 1f))
+              .fillMaxHeight()
+              .background(Color(item.accentColorHex))
           )
         }
       }
