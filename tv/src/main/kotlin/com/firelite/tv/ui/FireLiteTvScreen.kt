@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Settings
@@ -80,11 +82,14 @@ fun FireLiteTvScreen(
   var appList by remember { mutableStateOf(TvAppManager.getInstantFallbackApps()) }
 
   var focusedApp by remember { mutableStateOf<TvAppItem?>(appList.firstOrNull()) }
-  var focusedMedia by remember { mutableStateOf<MediaItem?>(null) }
+  var focusedWatchNext by remember { mutableStateOf<MediaItem?>(null) }
+  var focusedPinnedShow by remember { mutableStateOf<MediaItem?>(null) }
+  val focusedMedia = focusedWatchNext ?: focusedPinnedShow
 
   val appsListState = rememberLazyListState()
   val watchNextListState = rememberLazyListState()
   val contentListState = rememberLazyListState()
+  val verticalScrollState = rememberScrollState()
 
   // Smooth automatic centering of the focused app during D-pad navigation
   LaunchedEffect(focusedApp) {
@@ -96,32 +101,45 @@ fun FireLiteTvScreen(
           scrollOffset = -60
         )
       }
+      verticalScrollState.animateScrollTo(0)
     }
   }
 
-  // Smooth automatic centering of the focused pinned show or watch-next item
-  LaunchedEffect(focusedMedia) {
-    if (focusedMedia != null) {
-      val wnIdx = watchNextItems.indexOf(focusedMedia)
-      if (wnIdx >= 0) {
+  // Smooth automatic centering of the focused Watch Next item
+  LaunchedEffect(focusedWatchNext) {
+    if (focusedWatchNext != null) {
+      val idx = watchNextItems.indexOf(focusedWatchNext)
+      if (idx >= 0) {
         watchNextListState.animateScrollToItem(
-          index = (wnIdx - 1).coerceAtLeast(0),
+          index = (idx - 1).coerceAtLeast(0),
           scrollOffset = -60
         )
       }
-      val idx = pinnedItems.indexOf(focusedMedia)
+      // Center Continue Watching comfortably on screen
+      if (verticalScrollState.maxValue > 0) {
+        verticalScrollState.animateScrollTo(verticalScrollState.maxValue / 2)
+      }
+    }
+  }
+
+  // Smooth automatic centering of the focused Pinned Show item
+  LaunchedEffect(focusedPinnedShow) {
+    if (focusedPinnedShow != null) {
+      val idx = pinnedItems.indexOf(focusedPinnedShow)
       if (idx >= 0) {
         contentListState.animateScrollToItem(
           index = (idx - 1).coerceAtLeast(0),
           scrollOffset = -60
         )
       }
+      // Scroll down so Pinned Shows row is fully visible
+      if (verticalScrollState.maxValue > 0) {
+        verticalScrollState.animateScrollTo(verticalScrollState.maxValue)
+      }
     }
   }
 
   val firstAppFocusRequester = remember { FocusRequester() }
-  val firstWatchNextFocusRequester = remember { FocusRequester() }
-  val firstContentFocusRequester = remember { FocusRequester() }
   val settingsFocusRequester = remember { FocusRequester() }
 
   // 1. Asynchronously load native Android TV / Fire OS Watch Next rows
@@ -177,6 +195,12 @@ fun FireLiteTvScreen(
 
   // Couch-TV direct content deep link launcher with task-clearing flags
   fun launchContent(item: MediaItem) {
+    // Record into persistent Continue Watching
+    com.firelite.tv.util.TvWatchNextManager.recordWatch(context, item)
+    val updatedList = listOf(item.copy(id = if (item.id.startsWith("cw_")) item.id else "cw_${item.id}", badge = "RESUME", playbackProgress = 0.20f)) +
+      watchNextItems.filterNot { it.title.equals(item.title, ignoreCase = true) }
+    watchNextItems = updatedList.take(15)
+
     val contentUrl = item.contentUrl
     val pkg = item.deepLinkPackage ?: (if (!contentUrl.isNullOrEmpty()) com.firelite.tv.util.TvWatchNextManager.packageForUrl(contentUrl) else null)
     var started = false
@@ -266,7 +290,7 @@ fun FireLiteTvScreen(
 
   // Dynamic Apple TV ambient background color matching either the focused app or focused show
   val activeColor = when {
-    focusedMedia != null -> Color(focusedMedia!!.accentColorHex)
+    focusedMedia != null -> Color(focusedMedia.accentColorHex)
     focusedApp != null -> focusedApp!!.brandColor
     else -> Color(0xFF0F1F38)
   }
@@ -281,12 +305,12 @@ fun FireLiteTvScreen(
 
   // Dynamic spotlight text
   val spotlightTitle = when {
-    focusedMedia != null -> focusedMedia!!.title.uppercase()
+    focusedMedia != null -> focusedMedia.title.uppercase()
     focusedApp != null -> focusedApp!!.name.uppercase()
     else -> "APPLICATIONS"
   }
   val spotlightSubtitle = when {
-    focusedMedia != null -> "${focusedMedia!!.platform} • ${focusedMedia!!.subtitle}"
+    focusedMedia != null -> "${focusedMedia.platform} • ${focusedMedia.subtitle}"
     focusedApp != null -> focusedApp!!.tagline
     else -> "Use D-Pad to browse • Press OK to open"
   }
@@ -324,7 +348,8 @@ fun FireLiteTvScreen(
     Column(
       modifier = Modifier
         .fillMaxSize()
-        .padding(horizontal = 48.dp, vertical = 22.dp)
+        .verticalScroll(verticalScrollState)
+        .padding(horizontal = 48.dp, vertical = 20.dp)
     ) {
       // Top Bar: Clean Brand on Left, Digital Clock, Date & Bare Settings Icon on Right
       TvTopBar(
@@ -388,12 +413,12 @@ fun FireLiteTvScreen(
             )
             .focusProperties {
               up = settingsFocusRequester
-              down = if (watchNextItems.isNotEmpty()) firstWatchNextFocusRequester else firstContentFocusRequester
             }
             .onFocusChanged { focusState ->
               if (focusState.isFocused) {
                 focusedApp = app
-                focusedMedia = null
+                focusedWatchNext = null
+                focusedPinnedShow = null
               }
             }
 
@@ -451,19 +476,12 @@ fun FireLiteTvScreen(
           horizontalArrangement = Arrangement.spacedBy(14.dp),
           modifier = Modifier.fillMaxWidth()
         ) {
-          itemsIndexed(watchNextItems, key = { _, item -> item.id }) { index, wnItem ->
+          itemsIndexed(watchNextItems, key = { _, item -> item.id }) { _, wnItem ->
             val wnTileModifier = Modifier
-              .then(
-                if (index == 0) Modifier.focusRequester(firstWatchNextFocusRequester)
-                else Modifier
-              )
-              .focusProperties {
-                up = firstAppFocusRequester
-                down = firstContentFocusRequester
-              }
               .onFocusChanged { focusState ->
                 if (focusState.isFocused) {
-                  focusedMedia = wnItem
+                  focusedWatchNext = wnItem
+                  focusedPinnedShow = null
                   focusedApp = null
                 }
               }
@@ -472,7 +490,8 @@ fun FireLiteTvScreen(
               item = wnItem,
               onSelect = { launchContent(wnItem) },
               onFocus = {
-                focusedMedia = wnItem
+                focusedWatchNext = wnItem
+                focusedPinnedShow = null
                 focusedApp = null
               },
               modifier = wnTileModifier
@@ -517,18 +536,12 @@ fun FireLiteTvScreen(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxWidth()
       ) {
-        itemsIndexed(pinnedItems, key = { _, item -> item.id }) { index, mediaItem ->
+        itemsIndexed(pinnedItems, key = { _, item -> item.id }) { _, mediaItem ->
           val contentTileModifier = Modifier
-            .then(
-              if (index == 0) Modifier.focusRequester(firstContentFocusRequester)
-              else Modifier
-            )
-            .focusProperties {
-              up = if (watchNextItems.isNotEmpty()) firstWatchNextFocusRequester else firstAppFocusRequester
-            }
             .onFocusChanged { focusState ->
               if (focusState.isFocused) {
-                focusedMedia = mediaItem
+                focusedPinnedShow = mediaItem
+                focusedWatchNext = null
                 focusedApp = null
               }
             }
@@ -537,7 +550,8 @@ fun FireLiteTvScreen(
             item = mediaItem,
             onSelect = { launchContent(mediaItem) },
             onFocus = {
-              focusedMedia = mediaItem
+              focusedPinnedShow = mediaItem
+              focusedWatchNext = null
               focusedApp = null
             },
             modifier = contentTileModifier
@@ -545,7 +559,7 @@ fun FireLiteTvScreen(
         }
       }
 
-      Spacer(modifier = Modifier.weight(1f))
+      Spacer(modifier = Modifier.height(24.dp))
 
       // Clean Minimalist Remote Hint at Bottom
       Row(
