@@ -109,3 +109,4 @@ class MoodDeckSectionTest {
     assertNotNull(resolveDeckBackdropTitle(decks, topIndex = 0, winner = null))
   }
 }
+
