@@ -3,6 +3,7 @@ package com.firelite.tv.util
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.firelite.core.data.HotstarDeepLinks
 import com.firelite.core.model.Category
 import com.firelite.core.model.MediaItem
 import kotlinx.coroutines.Dispatchers
@@ -11,16 +12,121 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Reads Android TV & Fire OS native Watch Next rows ("Continue Watching") and manages
- * local persistent playback history for FireLite.
- * Apps such as Netflix, Prime Video, JioHotstar, and YouTube publish resume points,
- * episode details, poster art, and direct playback URIs to content://android.media.tv/watch_next_program.
+ * Thread-safe LRU cache for up to [maxSize] recently watched shows/movies.
+ * Backed by an access-ordered [LinkedHashMap] so most-recently-watched items stay at the
+ * front when exported via [snapshotRecentFirst] and the least-recently-watched item is
+ * evicted once more than [maxSize] distinct items are recorded.
+ */
+class RecentlyWatchedLruCache(
+  val maxSize: Int = TvWatchNextManager.MAX_RECENT_ITEMS
+) {
+  data class Entry(
+    val item: MediaItem,
+    val lastWatchedAtMillis: Long = 0L
+  )
+
+  private val cache = object : LinkedHashMap<String, Entry>(maxSize + 1, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?): Boolean {
+      return size > maxSize
+    }
+  }
+
+  @Synchronized
+  fun put(item: MediaItem, lastWatchedAtMillis: Long = System.currentTimeMillis()): MediaItem {
+    val normalized = HotstarDeepLinks.normalizeMediaItem(item, preferWatch = true)
+    val key = canonicalKey(normalized)
+    val matchingKey = findMatchingKeyLocked(normalized, key)
+    val previous = matchingKey?.let { cache.remove(it) }
+    val merged = mergeItem(incoming = normalized, previous = previous?.item)
+    val resolvedTimestamp = maxOf(lastWatchedAtMillis, previous?.lastWatchedAtMillis ?: 0L)
+    cache[key] = Entry(item = merged, lastWatchedAtMillis = resolvedTimestamp)
+    return merged
+  }
+
+  @Synchronized
+  fun restoreEntriesRecentFirst(entries: List<Entry>) {
+    cache.clear()
+    // Oldest/LRU is inserted first so newest/MRU lands at the LinkedHashMap tail.
+    for (entry in entries.take(maxSize).asReversed()) {
+      putInternalLocked(entry.item, entry.lastWatchedAtMillis)
+    }
+  }
+
+  @Synchronized
+  fun snapshotEntriesRecentFirst(): List<Entry> = cache.values.toList().asReversed()
+
+  @Synchronized
+  fun snapshotRecentFirst(): List<MediaItem> = cache.values.map { it.item }.asReversed()
+
+  @Synchronized
+  fun size(): Int = cache.size
+
+  @Synchronized
+  fun clear() {
+    cache.clear()
+  }
+
+  private fun putInternalLocked(item: MediaItem, lastWatchedAtMillis: Long) {
+    val normalized = HotstarDeepLinks.normalizeMediaItem(item, preferWatch = true)
+    val key = canonicalKey(normalized)
+    val matchingKey = findMatchingKeyLocked(normalized, key)
+    val previous = matchingKey?.let { cache.remove(it) }
+    val merged = mergeItem(incoming = normalized, previous = previous?.item)
+    cache[key] = Entry(item = merged, lastWatchedAtMillis = lastWatchedAtMillis)
+  }
+
+  private fun findMatchingKeyLocked(candidate: MediaItem, preferredKey: String): String? {
+    if (cache.containsKey(preferredKey)) return preferredKey
+    return cache.entries.firstOrNull { (_, entry) ->
+      val existing = entry.item
+      (!candidate.contentId.isNullOrBlank() && candidate.contentId == existing.contentId &&
+        candidate.platform.equals(existing.platform, ignoreCase = true)) ||
+        (!candidate.contentUrl.isNullOrBlank() &&
+          candidate.contentUrl.equals(existing.contentUrl, ignoreCase = true)) ||
+        (candidate.title.equals(existing.title, ignoreCase = true) &&
+          candidate.platform.equals(existing.platform, ignoreCase = true))
+    }?.key
+  }
+
+  private fun mergeItem(incoming: MediaItem, previous: MediaItem?): MediaItem {
+    if (previous == null) return incoming
+    return incoming.copy(
+      contentId = incoming.contentId ?: previous.contentId,
+      contentUrl = incoming.contentUrl ?: previous.contentUrl,
+      fallbackUrl = incoming.fallbackUrl ?: previous.fallbackUrl,
+      deepLinkPackage = incoming.deepLinkPackage ?: previous.deepLinkPackage,
+      artworkResName = incoming.artworkResName ?: previous.artworkResName,
+      bannerResName = incoming.bannerResName ?: previous.bannerResName,
+      characterResName = incoming.characterResName ?: previous.characterResName,
+      posterUrl = incoming.posterUrl ?: previous.posterUrl,
+      playbackProgress = incoming.playbackProgress ?: previous.playbackProgress,
+      episodeTitle = incoming.episodeTitle ?: previous.episodeTitle
+    )
+  }
+
+  internal fun canonicalKey(normalized: MediaItem): String {
+    val cid = normalized.contentId?.trim()?.takeIf { it.isNotEmpty() }
+    if (cid != null) return "cid:${normalized.platform.trim().lowercase()}:$cid"
+    val url = normalized.contentUrl?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+    if (url != null) return "url:$url"
+    return "title:${normalized.platform.trim().lowercase()}:${normalized.title.trim().lowercase()}"
+  }
+}
+
+/**
+ * Reads Android TV / Fire OS native Watch Next rows and manages FireLite's
+ * persistent 10-item LRU recently watched history without synthetic/pinned overrides.
  */
 object TvWatchNextManager {
+  const val MAX_RECENT_ITEMS = 10
   private const val TAG = "TvWatchNextManager"
   private const val PREFS_NAME = "firelite_continue_watching"
-  private const val KEY_CW_ITEMS = "continue_watching_items_v4"
-  private val WATCH_NEXT_URI = Uri.parse("content://android.media.tv/watch_next_program")
+  private const val KEY_RECENT_LRU_ITEMS = "recently_watched_lru_v1"
+  private val lruCache = RecentlyWatchedLruCache(maxSize = MAX_RECENT_ITEMS)
+
+  private val WATCH_NEXT_URI: Uri by lazy {
+    Uri.parse("content://android.media.tv/watch_next_program")
+  }
 
   private val PROJECTION = arrayOf(
     "_id",
@@ -37,16 +143,40 @@ object TvWatchNextManager {
   )
 
   /**
-   * Loads Continue Watching items combining:
-   * 1. System-level content://android.media.tv/watch_next_program
-   * 2. Local persistent playback history in FireLite
-   * 3. Seeded verified JioHotstar & Netflix titles if cold/fresh session
+   * Loads genuine recently watched items (up to [MAX_RECENT_ITEMS]) combining:
+   * 1. FireLite's persisted LRU recently-watched cache
+   * 2. Any system-level Watch Next rows from content://android.media.tv/watch_next_program
    */
   suspend fun loadWatchNextItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
-    val items = mutableListOf<MediaItem>()
-    val seenIds = mutableSetOf<String>()
+    val localEntries = loadLocalHistoryEntries(context)
+    val osEntries = queryOsWatchNextEntries(context)
 
-    // 1. Query Android TV / Fire OS native Watch Next content provider
+    val mergedEntries: List<RecentlyWatchedLruCache.Entry> = if (osEntries.isEmpty()) {
+      localEntries
+    } else {
+      val combined = RecentlyWatchedLruCache(MAX_RECENT_ITEMS)
+      // Insert older items first so newer timestamps end up at the MRU tail; for ties, preserve original MRU order with local items taking priority.
+      val allChronological = (osEntries.asReversed() + localEntries.asReversed()).sortedWith(
+        compareBy<RecentlyWatchedLruCache.Entry> { it.lastWatchedAtMillis }
+      )
+      for (entry in allChronological) {
+        combined.put(entry.item, entry.lastWatchedAtMillis)
+      }
+      combined.snapshotEntriesRecentFirst()
+    }
+
+    lruCache.restoreEntriesRecentFirst(mergedEntries)
+    val snapshot = lruCache.snapshotRecentFirst()
+    if (mergedEntries.map { it.item } != localEntries.map { it.item }) {
+      saveLocalHistoryEntries(context, lruCache.snapshotEntriesRecentFirst())
+    }
+    snapshot
+  }
+
+  fun getRecentlyWatchedSnapshot(): List<MediaItem> = lruCache.snapshotRecentFirst()
+
+  private fun queryOsWatchNextEntries(context: Context): List<RecentlyWatchedLruCache.Entry> {
+    val osEntries = mutableListOf<RecentlyWatchedLruCache.Entry>()
     try {
       val cr = context.contentResolver
       cr.query(WATCH_NEXT_URI, PROJECTION, null, null, "last_engagement_time_utc_millis DESC")?.use { cursor ->
@@ -60,6 +190,7 @@ object TvWatchNextManager {
         val intentIdx = cursor.getColumnIndex("intent_uri")
         val posIdx = cursor.getColumnIndex("last_playback_position_millis")
         val durIdx = cursor.getColumnIndex("duration_millis")
+        val engagementIdx = cursor.getColumnIndex("last_engagement_time_utc_millis")
 
         while (cursor.moveToNext()) {
           val rowId = if (idIdx >= 0) cursor.getString(idIdx) else ""
@@ -74,6 +205,7 @@ object TvWatchNextManager {
           val intentUri = if (intentIdx >= 0) cursor.getString(intentIdx) else null
           val pos = if (posIdx >= 0) cursor.getLong(posIdx) else -1L
           val dur = if (durIdx >= 0) cursor.getLong(durIdx) else -1L
+          val engagementMillis = if (engagementIdx >= 0) cursor.getLong(engagementIdx) else 0L
 
           val progress = if (dur > 0 && pos in 0..dur) {
             (pos.toFloat() / dur.toFloat()).coerceIn(0.05f, 0.95f)
@@ -90,134 +222,114 @@ object TvWatchNextManager {
             }
           }.trim()
 
-          val itemId = "wn_${rowId.ifEmpty { items.size.toString() }}"
-          if (seenIds.add(itemId)) {
-            items.add(
-              MediaItem(
+          val itemId = "wn_${rowId.ifEmpty { osEntries.size.toString() }}"
+          osEntries.add(
+            RecentlyWatchedLruCache.Entry(
+              item = MediaItem(
                 id = itemId,
                 title = title,
                 category = Category.SERIES,
                 platform = platformName,
-                subtitle = episodeInfo.ifEmpty { "Continue Watching" },
+                subtitle = episodeInfo.ifEmpty { "Recently Watched" },
                 durationOrEpisodes = if (!season.isNullOrBlank() && !episode.isNullOrBlank()) "S$season E$episode" else (epTitle ?: "Resume"),
                 badge = "RESUME",
                 rating = "TV-14",
                 accentColorHex = accentColor,
-                contentUrl = intentUri,
+                contentUrl = if (pkg == HotstarDeepLinks.PACKAGE_NAME) {
+                  HotstarDeepLinks.normalizeUrl(intentUri, preferWatch = true)
+                } else {
+                  intentUri
+                },
                 deepLinkPackage = pkg.ifEmpty { null },
                 posterUrl = poster,
                 playbackProgress = progress,
                 episodeTitle = epTitle
-              )
+              ),
+              lastWatchedAtMillis = engagementMillis.coerceAtLeast(0L)
             )
-          }
+          )
         }
       }
     } catch (e: Exception) {
       Log.d(TAG, "Watch Next programs not accessible: ${e.message}")
     }
-
-    // 2. Load locally persisted continue watching history from FireLite sessions
-    val localHistory = loadLocalHistory(context)
-    for (item in localHistory) {
-      if (seenIds.add(item.id) && items.none { it.title.equals(item.title, ignoreCase = true) }) {
-        items.add(item)
-      }
-    }
-
-    // 3. Fallback to initial verified titles so Continue Watching row is always populated and ready
-    if (items.isEmpty()) {
-      val initial = getInitialContinueWatchingItems()
-      for (item in initial) {
-        if (seenIds.add(item.id)) {
-          items.add(item)
-        }
-      }
-      saveLocalHistory(context, items)
-    }
-
-    // Always guarantee that "I'm Game" and user's actual watched titles are at the top
-    val initialTitles = getInitialContinueWatchingItems()
-    val imGame = initialTitles.firstOrNull { it.contentId == "1271354531" } ?: initialTitles[0]
-    val bittu = initialTitles.firstOrNull { it.id == "cw_bittu_bahanebaaz" }
-
-    // Ensure I'm Game is at index 0
-    val existingImGameIdx = items.indexOfFirst { it.contentId == "1271354531" || it.title.contains("I'm Game", ignoreCase = true) }
-    if (existingImGameIdx > 0) {
-      val found = items.removeAt(existingImGameIdx)
-      items.add(0, found)
-    } else if (existingImGameIdx < 0) {
-      items.add(0, imGame)
-    }
-
-    // Ensure Bittu Bahanebaaz is right behind I'm Game if present
-    if (bittu != null && items.none { it.title.contains("Bittu", ignoreCase = true) }) {
-      items.add(1.coerceAtMost(items.size), bittu)
-    }
-
-    items
+    return osEntries
   }
 
   /**
-   * Records playback when user launches any title from FireLite.
-   * Promotes the item to the top of Continue Watching with progress.
+   * Records playback when user launches any title from FireLite using the 10-item LRU cache.
+   * Promotes the item to the front (Most Recently Watched) with `/watch` resume URI and persists to disk.
    */
-  fun recordWatch(context: Context, item: MediaItem, progress: Float = 0.45f) {
-    try {
-      val current = loadLocalHistory(context).toMutableList()
-      current.removeAll { it.id == item.id || it.title.equals(item.title, ignoreCase = true) }
-      val updated = item.copy(
-        id = if (item.id.startsWith("cw_")) item.id else "cw_${item.id}",
-        playbackProgress = progress.coerceIn(0.05f, 0.95f),
-        badge = "RESUME"
-      )
-      current.add(0, updated)
-      saveLocalHistory(context, current.take(15))
-    } catch (e: Exception) {
-      Log.w(TAG, "Failed to record watch: ${e.message}")
+  fun recordWatch(context: Context, item: MediaItem, progress: Float? = null): MediaItem {
+    if (lruCache.size() == 0) {
+      val persisted = loadLocalHistoryEntries(context)
+      if (persisted.isNotEmpty()) {
+        lruCache.restoreEntriesRecentFirst(persisted)
+      }
     }
+    val normalized = HotstarDeepLinks.normalizeMediaItem(item, preferWatch = true)
+    val stableId = if (normalized.id.startsWith("cw_")) normalized.id else "cw_${normalized.id}"
+    val resolvedProgress = (progress ?: normalized.playbackProgress ?: 0.20f).coerceIn(0.05f, 0.95f)
+    val prepared = normalized.copy(
+      id = stableId,
+      playbackProgress = resolvedProgress,
+      badge = "RESUME"
+    )
+    val stored = lruCache.put(prepared, lastWatchedAtMillis = System.currentTimeMillis())
+    saveLocalHistoryEntries(context, lruCache.snapshotEntriesRecentFirst())
+    return stored
   }
 
-  private fun loadLocalHistory(context: Context): List<MediaItem> {
+  private fun loadLocalHistoryEntries(context: Context): List<RecentlyWatchedLruCache.Entry> {
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    val raw = prefs.getString(KEY_CW_ITEMS, null) ?: return emptyList()
-    val list = mutableListOf<MediaItem>()
+    val raw = prefs.getString(KEY_RECENT_LRU_ITEMS, null) ?: return emptyList()
+    val list = mutableListOf<RecentlyWatchedLruCache.Entry>()
     try {
       val arr = JSONArray(raw)
       for (i in 0 until arr.length()) {
         val obj = arr.getJSONObject(i)
+        val item = MediaItem(
+          id = obj.getString("id"),
+          title = obj.getString("title"),
+          category = Category.valueOf(obj.optString("category", "SERIES")),
+          platform = obj.optString("platform", "JioHotstar"),
+          subtitle = obj.optString("subtitle", "Recently Watched"),
+          durationOrEpisodes = obj.optString("durationOrEpisodes", "Resume"),
+          badge = obj.optString("badge", "RESUME"),
+          rating = obj.optString("rating", "TV-14"),
+          accentColorHex = obj.optLong("accentColorHex", 0xFF00A3FF),
+          contentId = if (obj.has("contentId")) obj.getString("contentId") else null,
+          contentUrl = if (obj.has("contentUrl")) obj.getString("contentUrl") else null,
+          fallbackUrl = if (obj.has("fallbackUrl")) obj.getString("fallbackUrl") else null,
+          deepLinkPackage = if (obj.has("deepLinkPackage")) obj.getString("deepLinkPackage") else null,
+          artworkResName = if (obj.has("artworkResName")) obj.getString("artworkResName") else null,
+          characterResName = if (obj.has("characterResName")) obj.getString("characterResName") else null,
+          posterUrl = if (obj.has("posterUrl")) obj.getString("posterUrl") else null,
+          playbackProgress = if (obj.has("playbackProgress")) obj.getDouble("playbackProgress").toFloat() else null,
+          episodeTitle = if (obj.has("episodeTitle")) obj.getString("episodeTitle") else null
+        )
+        val ts = obj.optLong("lastWatchedAtMillis", 0L)
         list.add(
-          MediaItem(
-            id = obj.getString("id"),
-            title = obj.getString("title"),
-            category = Category.valueOf(obj.optString("category", "SERIES")),
-            platform = obj.optString("platform", "JioHotstar"),
-            subtitle = obj.optString("subtitle", "Continue Watching"),
-            durationOrEpisodes = obj.optString("durationOrEpisodes", "Resume"),
-            badge = obj.optString("badge", "RESUME"),
-            rating = obj.optString("rating", "TV-14"),
-            accentColorHex = obj.optLong("accentColorHex", 0xFF00A3FF),
-            contentId = if (obj.has("contentId")) obj.getString("contentId") else null,
-            contentUrl = if (obj.has("contentUrl")) obj.getString("contentUrl") else null,
-            fallbackUrl = if (obj.has("fallbackUrl")) obj.getString("fallbackUrl") else null,
-            deepLinkPackage = if (obj.has("deepLinkPackage")) obj.getString("deepLinkPackage") else null,
-            artworkResName = if (obj.has("artworkResName")) obj.getString("artworkResName") else null,
-            characterResName = if (obj.has("characterResName")) obj.getString("characterResName") else null,
-            posterUrl = if (obj.has("posterUrl")) obj.getString("posterUrl") else null,
-            playbackProgress = if (obj.has("playbackProgress")) obj.getDouble("playbackProgress").toFloat() else null,
-            episodeTitle = if (obj.has("episodeTitle")) obj.getString("episodeTitle") else null
+          RecentlyWatchedLruCache.Entry(
+            item = HotstarDeepLinks.normalizeMediaItem(item, preferWatch = true),
+            lastWatchedAtMillis = ts
           )
         )
       }
     } catch (_: Exception) {}
-    return list
+    val capped = list.take(MAX_RECENT_ITEMS)
+    if (capped != list) {
+      saveLocalHistoryEntries(context, capped)
+    }
+    return capped
   }
 
-  private fun saveLocalHistory(context: Context, items: List<MediaItem>) {
+  private fun saveLocalHistoryEntries(context: Context, entries: List<RecentlyWatchedLruCache.Entry>) {
     try {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       val arr = JSONArray()
-      for (item in items) {
+      for (entry in entries.take(MAX_RECENT_ITEMS)) {
+        val item = entry.item
         val obj = JSONObject().apply {
           put("id", item.id)
           put("title", item.title)
@@ -228,6 +340,7 @@ object TvWatchNextManager {
           put("badge", item.badge)
           put("rating", item.rating)
           put("accentColorHex", item.accentColorHex)
+          put("lastWatchedAtMillis", entry.lastWatchedAtMillis)
           item.contentId?.let { put("contentId", it) }
           item.contentUrl?.let { put("contentUrl", it) }
           item.fallbackUrl?.let { put("fallbackUrl", it) }
@@ -240,7 +353,7 @@ object TvWatchNextManager {
         }
         arr.put(obj)
       }
-      prefs.edit().putString(KEY_CW_ITEMS, arr.toString()).apply()
+      prefs.edit().putString(KEY_RECENT_LRU_ITEMS, arr.toString()).apply()
     } catch (_: Exception) {}
   }
 
@@ -258,10 +371,10 @@ object TvWatchNextManager {
       badge = "CONTINUE",
       rating = "UA 16+",
       accentColorHex = 0xFF00A3FF,
-      contentId = "1271354531",
-      contentUrl = "https://www.hotstar.com/in/movies/im-game/1271354531",
+      contentId = HotstarDeepLinks.IM_GAME_CONTENT_ID,
+      contentUrl = HotstarDeepLinks.IM_GAME_WATCH_URI,
       fallbackUrl = "https://www.hotstar.com/in/explore?search_query=I%27m+Game",
-      deepLinkPackage = "in.startv.hotstar",
+      deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
       artworkResName = "art_im_game",
       playbackProgress = 0.74f,
       episodeTitle = "35m left"
@@ -276,10 +389,10 @@ object TvWatchNextManager {
       badge = "CONTINUE",
       rating = "TV-Y7",
       accentColorHex = 0xFF00A3FF,
-      contentId = "bittu_bahanebaaz",
-      contentUrl = "https://www.hotstar.com/in/explore?search_query=Bittu+Bahanebaaz",
+      contentId = HotstarDeepLinks.BITTU_EK_KA_TEEN_CONTENT_ID,
+      contentUrl = HotstarDeepLinks.BITTU_EK_KA_TEEN_WATCH_URI,
       fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Bittu+Bahanebaaz",
-      deepLinkPackage = "in.startv.hotstar",
+      deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
       artworkResName = "art_bittu_bahanebaaz",
       playbackProgress = 0.60f,
       episodeTitle = "Ek Ka Teen"
@@ -294,10 +407,10 @@ object TvWatchNextManager {
       badge = "RESUME",
       rating = "TV-14",
       accentColorHex = 0xFF00A3FF,
-      contentId = "1260168231",
-      contentUrl = "https://www.hotstar.com/in/shows/heart-beat/1260168231",
+      contentId = HotstarDeepLinks.HEART_BEAT_CONTENT_ID,
+      contentUrl = HotstarDeepLinks.showWatchUri("heart-beat", HotstarDeepLinks.HEART_BEAT_CONTENT_ID),
       fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Heart+Beat",
-      deepLinkPackage = "in.startv.hotstar",
+      deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
       artworkResName = "art_heart_beat",
       playbackProgress = 0.65f,
       episodeTitle = "The Emergency Ward"
@@ -312,10 +425,10 @@ object TvWatchNextManager {
       badge = "RESUME",
       rating = "TV-MA",
       accentColorHex = 0xFF00A3FF,
-      contentId = "1271672560",
-      contentUrl = "https://www.hotstar.com/in/shows/the-court/1271672560",
+      contentId = HotstarDeepLinks.THE_COURT_CONTENT_ID,
+      contentUrl = HotstarDeepLinks.showWatchUri("the-court", HotstarDeepLinks.THE_COURT_CONTENT_ID),
       fallbackUrl = "https://www.hotstar.com/in/explore?search_query=The+Court",
-      deepLinkPackage = "in.startv.hotstar",
+      deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
       artworkResName = "art_the_court",
       playbackProgress = 0.42f,
       episodeTitle = "Cross Examination"
@@ -330,10 +443,10 @@ object TvWatchNextManager {
       badge = "RESUME",
       rating = "TV-Y7",
       accentColorHex = 0xFF00A3FF,
-      contentId = "1260021004",
-      contentUrl = "https://www.hotstar.com/in/shows/doraemon/1260021004",
+      contentId = HotstarDeepLinks.DORAEMON_CONTENT_ID,
+      contentUrl = HotstarDeepLinks.showWatchUri("doraemon", HotstarDeepLinks.DORAEMON_CONTENT_ID),
       fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Doraemon",
-      deepLinkPackage = "in.startv.hotstar",
+      deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
       artworkResName = "art_doraemon",
       characterResName = "art_doraemon_char",
       playbackProgress = 0.50f,
@@ -342,20 +455,9 @@ object TvWatchNextManager {
   )
 
   /**
-   * Couch-TV inspired domain-to-package resolver for streaming platforms.
+   * Couch-TV inspired scheme and domain-to-package resolver for streaming platforms.
    */
-  fun packageForUrl(url: String): String? {
-    val host = runCatching { Uri.parse(url).host }.getOrNull()?.lowercase()?.removePrefix("www.") ?: return null
-    return when {
-      host.contains("hotstar.com") -> "in.startv.hotstar"
-      host.contains("netflix.com") -> "com.netflix.ninja"
-      host.contains("primevideo.com") -> "com.amazon.firebat"
-      host.contains("youtube.com") || host.contains("youtu.be") -> "com.amazon.firetv.youtube"
-      host.contains("sunnxt.com") -> "com.suntv.sunnxt"
-      host.contains("zee5.com") -> "com.graymatrix.did"
-      else -> null
-    }
-  }
+  fun packageForUrl(url: String): String? = HotstarDeepLinks.packageForUrl(url)
 
   private fun resolvePlatformAndColor(pkg: String): Pair<String, Long> {
     return when {

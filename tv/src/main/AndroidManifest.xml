@@ -8,6 +8,9 @@
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
     <queries>
+        <package android:name="in.startv.hotstar" />
+        <package android:name="com.netflix.ninja" />
+        <package android:name="com.amazon.firebat" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -29,7 +32,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:banner="@mipmap/ic_launcher"
-        android:label="FireLite TV"
+        android:label="Home Tv"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.FireLite">

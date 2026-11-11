@@ -471,7 +471,7 @@ fun ScreenMirrorOverlay(
       Spacer(modifier = Modifier.height(6.dp))
 
       Text(
-        text = if (connectedDevice != null) "$connectedDevice • Ready to cast" else "Connect via Fire TV Display Mirroring or FireLite Companion",
+        text = if (connectedDevice != null) "$connectedDevice • Ready to cast" else "Connect via Fire TV Display Mirroring or Home Tv Companion",
         fontSize = 12.sp,
         color = if (connectedDevice != null) Color(0xFF34D399) else Color(0x99D1D5DB)
       )
@@ -516,7 +516,7 @@ fun SettingsOverlay(
       "Weather & Alerts",
       "What's New Feed",
       "Screen Mirror",
-      "About FireLite"
+      "About Home Tv"
     )
   }
 

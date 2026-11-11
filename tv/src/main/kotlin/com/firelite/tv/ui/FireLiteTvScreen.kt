@@ -6,56 +6,59 @@ import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.Animatable
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.firelite.core.data.FireLiteRepository
+import com.firelite.core.data.HotstarDeepLinks
 import com.firelite.core.model.MediaItem
 import com.firelite.tv.util.TvAppItem
 import com.firelite.tv.util.TvAppManager
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 enum class TvOverlayState {
@@ -64,6 +67,68 @@ enum class TvOverlayState {
   SCREEN_MIRROR
 }
 
+private enum class TvFocusRow {
+  TOP_BAR,
+  APPS,
+  MY_FAVOURITES,
+  MOOD_DECK
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+private val ZeroVerticalBringIntoViewSpec = object : BringIntoViewSpec {
+  override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+private val TvHorizontalPivotBringIntoViewSpec = object : BringIntoViewSpec {
+  private val parentFraction = 0.22f
+
+  override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+    val targetForLeadingEdge = (parentFraction * containerSize).let { preferred ->
+      val spaceAvailable = containerSize - preferred
+      if (size <= containerSize && spaceAvailable < size) {
+        containerSize - size
+      } else {
+        preferred
+      }
+    }
+    return offset - targetForLeadingEdge
+  }
+}
+
+@Composable
+private fun TvSpotlightHeader(
+  title: String,
+  subtitle: String,
+  modifier: Modifier = Modifier
+) {
+  Column(
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(start = 6.dp, bottom = 6.dp)
+  ) {
+    Text(
+      text = title,
+      fontSize = 20.sp,
+      fontWeight = FontWeight.Black,
+      color = Color.White,
+      letterSpacing = 1.6.sp,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(2.dp))
+    Text(
+      text = subtitle,
+      fontSize = 12.sp,
+      fontWeight = FontWeight.Normal,
+      color = Color(0xBBFFFFFF),
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis
+    )
+  }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FireLiteTvScreen(
   repository: FireLiteRepository,
@@ -73,83 +138,94 @@ fun FireLiteTvScreen(
 ) {
   val context = LocalContext.current
 
-  val kidsItems by repository.kidsItems.collectAsState()
-  val seriesItems by repository.seriesItems.collectAsState()
-  val pinnedItems = remember(kidsItems, seriesItems) { kidsItems + seriesItems }
-  var watchNextItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+  val favouriteSpecs = remember { buildDefaultFavouritesLineup() }
+  val preloadedFavouritesAssets = rememberPreloadedFavouritesAssets(favouriteSpecs)
 
   var overlayState by remember { mutableStateOf(TvOverlayState.NONE) }
   var appList by remember { mutableStateOf(TvAppManager.getInstantFallbackApps()) }
+  var moodDecks by remember {
+    mutableStateOf(filterPlayableMoodDecks(installedPackages = detectInstalledStreamingPackages(context)))
+  }
 
+  var focusedRow by remember { mutableStateOf(TvFocusRow.APPS) }
   var focusedApp by remember { mutableStateOf<TvAppItem?>(appList.firstOrNull()) }
-  var focusedWatchNext by remember { mutableStateOf<MediaItem?>(null) }
-  var focusedPinnedShow by remember { mutableStateOf<MediaItem?>(null) }
-  val focusedMedia = focusedWatchNext ?: focusedPinnedShow
+  var focusedFavourite by remember { mutableStateOf<FavouriteCharacterSpec?>(null) }
 
-  val appsListState = rememberLazyListState()
-  val watchNextListState = rememberLazyListState()
-  val contentListState = rememberLazyListState()
+  var moodTopIndex by remember { mutableIntStateOf(0) }
+  var moodStage by remember { mutableStateOf(MoodDeckStage.BROWSE) }
+  var moodSpinToken by remember { mutableIntStateOf(0) }
+  var moodPendingWinner by remember { mutableStateOf<MoodTitleSpec?>(null) }
+  var moodLandedWinner by remember { mutableStateOf<MoodTitleSpec?>(null) }
+
+  val safeMoodIndex = if (moodDecks.isEmpty()) 0 else moodTopIndex % moodDecks.size
+  val activeMoodDeck = moodDecks.getOrNull(safeMoodIndex)
+  val preloadedMoodAssets = rememberPreloadedMoodAssets(
+    decks = moodDecks,
+    topIndex = safeMoodIndex,
+    winnerTitle = moodPendingWinner ?: moodLandedWinner
+  )
+
+  val appsScrollState = rememberScrollState()
   val verticalScrollState = rememberScrollState()
+  var myFavouritesTopYPx by remember { mutableIntStateOf(0) }
+  var moodDeckTopYPx by remember { mutableIntStateOf(0) }
 
-  // Smooth automatic centering of the focused app during D-pad navigation
-  LaunchedEffect(focusedApp) {
-    if (focusedApp != null) {
-      val idx = appList.indexOf(focusedApp)
-      if (idx >= 0) {
-        appsListState.animateScrollToItem(
-          index = (idx - 1).coerceAtLeast(0),
-          scrollOffset = -60
-        )
-      }
-      verticalScrollState.animateScrollTo(0)
+  // Scroll vertically ONLY when changing rows (never on horizontal item movement).
+  LaunchedEffect(focusedRow, myFavouritesTopYPx, moodDeckTopYPx, verticalScrollState.maxValue) {
+    val maxScroll = verticalScrollState.maxValue
+    if (maxScroll <= 0) return@LaunchedEffect
+    val targetScroll = when (focusedRow) {
+      TvFocusRow.TOP_BAR, TvFocusRow.APPS -> 0
+      TvFocusRow.MY_FAVOURITES -> myFavouritesTopYPx.coerceIn(0, maxScroll)
+      TvFocusRow.MOOD_DECK -> moodDeckTopYPx.coerceIn(0, maxScroll)
+    }
+    if (verticalScrollState.value != targetScroll) {
+      verticalScrollState.animateScrollTo(targetScroll)
     }
   }
 
-  // Smooth automatic centering of the focused Watch Next item
-  LaunchedEffect(focusedWatchNext) {
-    if (focusedWatchNext != null) {
-      val idx = watchNextItems.indexOf(focusedWatchNext)
-      if (idx >= 0) {
-        watchNextListState.animateScrollToItem(
-          index = (idx - 1).coerceAtLeast(0),
-          scrollOffset = -60
-        )
-      }
-      // Center Continue Watching comfortably on screen
-      if (verticalScrollState.maxValue > 0) {
-        verticalScrollState.animateScrollTo(verticalScrollState.maxValue / 2)
-      }
-    }
+  // Per-item persistent FocusRequesters inside non-lazy Rows so horizontal scrolling
+  // NEVER detaches or loses UP/DOWN D-pad focus targets across rows.
+  val appRequesters = remember { HashMap<String, FocusRequester>() }
+  fun requesterForApp(id: String): FocusRequester = appRequesters.getOrPut(id) { FocusRequester() }
+
+  var lastFocusedAppId by remember { mutableStateOf<String?>(null) }
+  var lastFocusedFrontFavId by remember {
+    mutableStateOf(favouriteSpecs.firstOrNull { it.row == FavouriteRow.FRONT }?.id)
   }
 
-  // Smooth automatic centering of the focused Pinned Show item
-  LaunchedEffect(focusedPinnedShow) {
-    if (focusedPinnedShow != null) {
-      val idx = pinnedItems.indexOf(focusedPinnedShow)
-      if (idx >= 0) {
-        contentListState.animateScrollToItem(
-          index = (idx - 1).coerceAtLeast(0),
-          scrollOffset = -60
-        )
-      }
-      // Scroll down so Pinned Shows row is fully visible
-      if (verticalScrollState.maxValue > 0) {
-        verticalScrollState.animateScrollTo(verticalScrollState.maxValue)
-      }
-    }
+  fun activeAppRequester(): FocusRequester {
+    val targetId = lastFocusedAppId?.takeIf { id -> appList.any { it.id == id } }
+      ?: appList.firstOrNull()?.id
+    return targetId?.let { requesterForApp(it) } ?: FocusRequester.Default
   }
 
-  val firstAppFocusRequester = remember { FocusRequester() }
+  val firstFavouriteFocusRequester = remember { FocusRequester() }
+  val firstBackId = remember(favouriteSpecs) {
+    favouriteSpecs.filter { it.row == FavouriteRow.BACK }.minByOrNull { it.rowOrder }?.id
+  }
+  val favouriteFocusRequesters = remember(favouriteSpecs, firstBackId) {
+    favouriteSpecs.associate { item ->
+      item.id to if (item.id == firstBackId) firstFavouriteFocusRequester else FocusRequester()
+    }
+  }
+  val moodDeckFocusRequester = remember { FocusRequester() }
+  val searchFocusRequester = remember { FocusRequester() }
   val settingsFocusRequester = remember { FocusRequester() }
 
-  // 1. Asynchronously load native Android TV / Fire OS Watch Next rows
-  LaunchedEffect(Unit) {
-    try {
-      val wn = com.firelite.tv.util.TvWatchNextManager.loadWatchNextItems(context)
-      if (wn.isNotEmpty()) {
-        watchNextItems = wn
+  val lifecycleOwner = LocalLifecycleOwner.current
+
+  // Refresh installed app filter whenever the launcher returns to foreground
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        moodDecks = filterPlayableMoodDecks(installedPackages = detectInstalledStreamingPackages(context))
       }
-    } catch (_: Exception) {}
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(observer)
+    }
   }
 
   // 2. Asynchronously pre-warm & resolve all installed apps in parallel on background thread
@@ -158,7 +234,7 @@ fun FireLiteTvScreen(
       val resolved = TvAppManager.resolveInstalledAppsParallel(context)
       if (resolved.isNotEmpty()) {
         appList = resolved
-        if (focusedApp == null && focusedMedia == null) {
+        if (focusedApp == null && focusedRow == TvFocusRow.APPS) {
           focusedApp = resolved.firstOrNull()
         }
       }
@@ -169,7 +245,7 @@ fun FireLiteTvScreen(
   LaunchedEffect(Unit) {
     delay(50)
     try {
-      firstAppFocusRequester.requestFocus()
+      activeAppRequester().requestFocus()
     } catch (_: Exception) {}
   }
 
@@ -195,14 +271,8 @@ fun FireLiteTvScreen(
 
   // Couch-TV direct content deep link launcher with task-clearing flags
   fun launchContent(item: MediaItem) {
-    // Record into persistent Continue Watching
-    com.firelite.tv.util.TvWatchNextManager.recordWatch(context, item)
-    val updatedList = listOf(item.copy(id = if (item.id.startsWith("cw_")) item.id else "cw_${item.id}", badge = "RESUME", playbackProgress = 0.20f)) +
-      watchNextItems.filterNot { it.title.equals(item.title, ignoreCase = true) }
-    watchNextItems = updatedList.take(15)
-
-    val contentUrl = item.contentUrl
-    val pkg = item.deepLinkPackage ?: (if (!contentUrl.isNullOrEmpty()) com.firelite.tv.util.TvWatchNextManager.packageForUrl(contentUrl) else null)
+    val contentUrl = HotstarDeepLinks.normalizeUrl(item.contentUrl, preferWatch = false) ?: item.contentUrl
+    val pkg = item.deepLinkPackage ?: (if (!contentUrl.isNullOrEmpty()) HotstarDeepLinks.packageForUrl(contentUrl) else null)
     var started = false
 
     if (!contentUrl.isNullOrEmpty()) {
@@ -288,291 +358,251 @@ fun FireLiteTvScreen(
     }
   }
 
-  // Dynamic Apple TV ambient background color matching either the focused app or focused show
-  val activeColor = when {
-    focusedMedia != null -> Color(focusedMedia.accentColorHex)
-    focusedApp != null -> focusedApp!!.brandColor
-    else -> Color(0xFF0F1F38)
-  }
-
-  val ambientAnim = remember { Animatable(activeColor) }
-  LaunchedEffect(activeColor) {
-    ambientAnim.animateTo(
-      targetValue = activeColor,
-      animationSpec = tween(durationMillis = 150)
-    )
-  }
-
-  // Dynamic spotlight text
-  val spotlightTitle = when {
-    focusedMedia != null -> focusedMedia.title.uppercase()
-    focusedApp != null -> focusedApp!!.name.uppercase()
-    else -> "APPLICATIONS"
-  }
-  val spotlightSubtitle = when {
-    focusedMedia != null -> "${focusedMedia.platform} • ${focusedMedia.subtitle}"
-    focusedApp != null -> focusedApp!!.tagline
-    else -> "Use D-Pad to browse • Press OK to open"
-  }
+  val activeFavourite = if (focusedRow == TvFocusRow.MY_FAVOURITES) focusedFavourite else null
+  val activeMood = if (focusedRow == TvFocusRow.MOOD_DECK) activeMoodDeck else null
+  val activeMoodSceneTitle = resolveDeckBackdropTitle(
+    decks = moodDecks,
+    topIndex = safeMoodIndex,
+    winner = moodLandedWinner
+  )
 
   Box(
-    modifier = modifier
-      .fillMaxSize()
-      .background(Color(0xFF040608)) // Pure deep OLED black
-      .drawBehind {
-        val c = ambientAnim.value
-        drawRect(
-          brush = Brush.radialGradient(
-            colors = listOf(
-              c.copy(alpha = 0.65f),
-              c.copy(alpha = 0.20f),
-              Color.Transparent
-            ),
-            center = Offset(size.width * 0.50f, size.height * 0.40f),
-            radius = size.width * 0.70f
-          )
-        )
-        drawRect(
-          brush = Brush.verticalGradient(
-            colors = listOf(
-              Color(0x33000000),
-              Color.Transparent,
-              Color(0x77000000),
-              Color(0xF0040608)
-            )
-          )
-        )
-      }
+    modifier = modifier.fillMaxSize()
   ) {
-    // Main UI Column
+    // Full-screen wallpaper + darkened B&W scene crossfade while a favourite is selected
+    FavouritesSceneBackdrop(
+      activeFavourite = activeFavourite,
+      preloadedAssets = preloadedFavouritesAssets,
+      ambientColorProvider = {
+        val fav = activeFavourite
+        val app = focusedApp
+        when {
+          fav != null -> fav.glowColor
+          activeMood != null -> activeMood.category.color
+          app != null -> app.brandColor
+          else -> Color(0xFF0F1F38)
+        }
+      }
+    )
+
+    // Heavily darkened, vignetted B&W 16:9 scene + soft mood glow behind the Mood Cards Deck
+    MoodDeckSceneBackdrop(
+      isVisible = focusedRow == TvFocusRow.MOOD_DECK,
+      sceneTitle = activeMoodSceneTitle,
+      moodColor = activeMoodDeck?.category?.color ?: Color(0xFF38BDF8),
+      assets = preloadedMoodAssets
+    )
+
+    // Fixed Top Chrome + Stable Shelves Container
     Column(
       modifier = Modifier
         .fillMaxSize()
-        .verticalScroll(verticalScrollState)
-        .padding(horizontal = 48.dp, vertical = 20.dp)
+        .padding(start = 48.dp, end = 48.dp, top = 6.dp)
     ) {
-      // Top Bar: Clean Brand on Left, Digital Clock, Date & Bare Settings Icon on Right
+      // Top Bar stays pinned at the top so vertical shelf navigation never scrolls headers off screen
       TvTopBar(
         onSearchClick = {},
         onSettingsClick = {
           if (!openTvSettings()) overlayState = TvOverlayState.SETTINGS
         },
+        searchFocusRequester = searchFocusRequester,
         settingsFocusRequester = settingsFocusRequester,
-        downFocusRequester = firstAppFocusRequester
+        downFocusRequester = activeAppRequester(),
+        rightRailFocusRequester = activeAppRequester(),
+        modifier = Modifier.onFocusChanged { focusState ->
+          if (focusState.hasFocus) {
+            focusedRow = TvFocusRow.TOP_BAR
+            focusedFavourite = null
+          }
+        }
       )
 
-      Spacer(modifier = Modifier.height(14.dp))
+      Spacer(modifier = Modifier.height(4.dp))
 
-      // Apple TV Style Active Spotlight Header (Instantaneous text update, zero recomposition overhead)
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(start = 6.dp, bottom = 12.dp)
-      ) {
-        Text(
-          text = spotlightTitle,
-          fontSize = 22.sp,
-          fontWeight = FontWeight.Black,
-          color = Color.White,
-          letterSpacing = 1.8.sp
-        )
-        Spacer(modifier = Modifier.height(3.dp))
-        Text(
-          text = spotlightSubtitle,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Normal,
-          color = Color(0xBBFFFFFF)
-        )
+      // Single-line fixed-height spotlight header so text length changes never shift layout vertically
+      val spotlightTitle = when {
+        activeFavourite != null -> activeFavourite.showTitle.uppercase()
+        activeMood != null ->
+          moodLandedWinner?.title?.uppercase() ?: activeMood.category.name.uppercase()
+        focusedApp != null -> focusedApp?.name?.uppercase() ?: "APPLICATIONS"
+        else -> "APPLICATIONS"
       }
-
-      // SECTION 1: APPLICATIONS
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
-      ) {
-        Text(
-          text = "APPLICATIONS",
-          fontSize = 13.sp,
-          fontWeight = FontWeight.Bold,
-          color = Color.White,
-          letterSpacing = 1.2.sp
-        )
+      val spotlightSubtitle = when {
+        activeFavourite != null ->
+          "${activeFavourite.characterName} • ${activeFavourite.subtitle} • Left/Right along row • Up/Down switch rows"
+        activeMood != null -> {
+          val landed = moodLandedWinner
+          val deckSize = activeMood.titles.size
+          val countText = if (deckSize == 1) "1 title" else "$deckSize titles"
+          landed?.let { "${it.appName} • Picked from ${activeMood.category.name}" }
+            ?: "$countText • Left: Skip mood • Right / OK: Spin reel"
+        }
+        focusedApp != null -> focusedApp?.tagline ?: ""
+        else -> "Use D-Pad to browse • Press OK to open"
       }
+      TvSpotlightHeader(
+        title = spotlightTitle,
+        subtitle = spotlightSubtitle
+      )
 
-      LazyRow(
-        state = appsListState,
-        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxWidth()
-      ) {
-        itemsIndexed(appList, key = { _, item -> item.id }) { index, app ->
-          val tileModifier = Modifier
-            .then(
-              if (index == 0) Modifier.focusRequester(firstAppFocusRequester)
-              else Modifier
-            )
-            .focusProperties {
-              up = settingsFocusRequester
-            }
-            .onFocusChanged { focusState ->
-              if (focusState.isFocused) {
-                focusedApp = app
-                focusedWatchNext = null
-                focusedPinnedShow = null
-              }
+      // Outer vertical scroll ignores child horizontal focus BringIntoView requests so rows never
+      // bob up/down on Left/Right D-pad movement; nested LazyRows use smooth TV horizontal pivoting.
+      CompositionLocalProvider(LocalBringIntoViewSpec provides ZeroVerticalBringIntoViewSpec) {
+        Column(
+          modifier = Modifier
+            .weight(1f)
+            .fillMaxWidth()
+            .verticalScroll(verticalScrollState)
+        ) {
+          CompositionLocalProvider(LocalBringIntoViewSpec provides TvHorizontalPivotBringIntoViewSpec) {
+            // SECTION 1: APPLICATIONS
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier.padding(bottom = 2.dp, start = 4.dp)
+            ) {
+              Text(
+                text = "APPLICATIONS",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                letterSpacing = 1.2.sp
+              )
             }
 
-          val systemIcon = when (app.systemActionType) {
-            "SETTINGS" -> Icons.Default.Settings
-            "SCREEN_MIRROR" -> Icons.Default.Cast
-            else -> null
-          }
+            Row(
+              horizontalArrangement = Arrangement.spacedBy(14.dp),
+              modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(appsScrollState)
+                .padding(horizontal = 6.dp, vertical = 8.dp)
+            ) {
+              appList.forEach { app ->
+                key(app.id) {
+                  val tileModifier = Modifier
+                    .focusRequester(requesterForApp(app.id))
+                    .focusProperties {
+                      up = settingsFocusRequester
+                      down = firstFavouriteFocusRequester
+                    }
+                    .onFocusChanged { focusState ->
+                      if (focusState.isFocused) {
+                        focusedRow = TvFocusRow.APPS
+                        focusedApp = app
+                        lastFocusedAppId = app.id
+                        focusedFavourite = null
+                      }
+                    }
 
-          TvAppTile(
-            title = app.name,
-            packageName = app.packageName,
-            iconResName = app.iconResName,
-            systemIcon = systemIcon,
-            onSelect = { onSelectApp(app) },
-            modifier = tileModifier
-          )
-        }
-      }
+                  val systemIcon = when (app.systemActionType) {
+                    "SETTINGS" -> Icons.Default.Settings
+                    "SCREEN_MIRROR" -> Icons.Default.Cast
+                    else -> null
+                  }
 
-      Spacer(modifier = Modifier.height(14.dp))
-
-      // SECTION: CONTINUE WATCHING (Android TV / Fire OS Watch Next)
-      if (watchNextItems.isNotEmpty()) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
-        ) {
-          Text(
-            text = "CONTINUE WATCHING",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            letterSpacing = 1.2.sp
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Box(
-            modifier = Modifier
-              .clip(RoundedCornerShape(4.dp))
-              .background(Color(0x3310B981))
-              .padding(horizontal = 6.dp, vertical = 1.dp)
-          ) {
-            Text(
-              text = "${watchNextItems.size} IN PROGRESS",
-              fontSize = 9.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = Color(0xFF10B981)
-            )
-          }
-        }
-
-        LazyRow(
-          state = watchNextListState,
-          contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-          horizontalArrangement = Arrangement.spacedBy(14.dp),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          itemsIndexed(watchNextItems, key = { _, item -> item.id }) { _, wnItem ->
-            val wnTileModifier = Modifier
-              .onFocusChanged { focusState ->
-                if (focusState.isFocused) {
-                  focusedWatchNext = wnItem
-                  focusedPinnedShow = null
-                  focusedApp = null
+                  TvAppTile(
+                    title = app.name,
+                    packageName = app.packageName,
+                    iconResName = app.iconResName,
+                    systemIcon = systemIcon,
+                    onSelect = { onSelectApp(app) },
+                    modifier = tileModifier
+                  )
                 }
               }
-
-            TvContentCard(
-              item = wnItem,
-              onSelect = { launchContent(wnItem) },
-              onFocus = {
-                focusedWatchNext = wnItem
-                focusedPinnedShow = null
-                focusedApp = null
-              },
-              modifier = wnTileModifier
-            )
-          }
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-      }
-
-      // SECTION 2: PINNED CONTENT ("MY FAVOURITES")
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
-      ) {
-        Text(
-          text = "PINNED SHOWS",
-          fontSize = 13.sp,
-          fontWeight = FontWeight.Bold,
-          color = Color.White,
-          letterSpacing = 1.2.sp
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Box(
-          modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0x3338BDF8))
-            .padding(horizontal = 6.dp, vertical = 1.dp)
-        ) {
-          Text(
-            text = "${pinnedItems.size} TITLES",
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF38BDF8)
-          )
-        }
-      }
-
-      LazyRow(
-        state = contentListState,
-        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxWidth()
-      ) {
-        itemsIndexed(pinnedItems, key = { _, item -> item.id }) { _, mediaItem ->
-          val contentTileModifier = Modifier
-            .onFocusChanged { focusState ->
-              if (focusState.isFocused) {
-                focusedPinnedShow = mediaItem
-                focusedWatchNext = null
-                focusedApp = null
-              }
             }
 
-          TvContentCard(
-            item = mediaItem,
-            onSelect = { launchContent(mediaItem) },
-            onFocus = {
-              focusedPinnedShow = mediaItem
-              focusedWatchNext = null
-              focusedApp = null
-            },
-            modifier = contentTileModifier
-          )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // SECTION 2: MY FAVOURITES (Two-row interactive character lineup)
+            MyFavouritesSection(
+              specs = favouriteSpecs,
+              selectedSpec = activeFavourite,
+              preloadedAssets = preloadedFavouritesAssets,
+              onFocusCharacter = { spec ->
+                focusedRow = TvFocusRow.MY_FAVOURITES
+                focusedFavourite = spec
+                if (spec.row == FavouriteRow.FRONT) {
+                  lastFocusedFrontFavId = spec.id
+                }
+                focusedApp = null
+                repository.setActiveContent(spec.toMediaItem())
+              },
+              onSelectCharacter = { spec ->
+                launchContent(spec.toMediaItem())
+              },
+              firstFocusRequester = firstFavouriteFocusRequester,
+              upFocusRequesterProvider = { activeAppRequester() },
+              downFocusRequesterProvider = {
+                if (moodDecks.isNotEmpty()) moodDeckFocusRequester else FocusRequester.Cancel
+              },
+              externalFocusRequesters = favouriteFocusRequesters,
+              modifier = Modifier.onGloballyPositioned { coordinates ->
+                myFavouritesTopYPx = coordinates.positionInParent().y.roundToInt()
+              }
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // SECTION 3: DON'T HAVE TIME TO BROWSE? (Mood Cards Deck + Slot Reel)
+            MoodDeckSection(
+              decks = moodDecks,
+              topIndex = safeMoodIndex,
+              stage = moodStage,
+              spinToken = moodSpinToken,
+              winner = if (moodStage == MoodDeckStage.REEL_SPINNING) moodPendingWinner else moodLandedWinner,
+              isSectionFocused = focusedRow == TvFocusRow.MOOD_DECK,
+              assets = preloadedMoodAssets,
+              deckFocusRequester = moodDeckFocusRequester,
+              upFocusRequesterProvider = {
+                lastFocusedFrontFavId?.let { favouriteFocusRequesters[it] } ?: firstFavouriteFocusRequester
+              },
+              onFocusDeck = {
+                focusedRow = TvFocusRow.MOOD_DECK
+                focusedFavourite = null
+                focusedApp = null
+              },
+              onSwipeLeft = {
+                moodStage = MoodDeckStage.BROWSE
+                moodPendingWinner = null
+                moodLandedWinner = null
+                moodTopIndex = advanceDeckIndex(safeMoodIndex, moodDecks.size)
+              },
+              onStartSpin = {
+                val deck = activeMoodDeck ?: return@MoodDeckSection
+                val picked = pickRandomSpinTitle(
+                  titles = deck.titles,
+                  excludeTitleId = moodLandedWinner?.id ?: moodPendingWinner?.id
+                ) ?: return@MoodDeckSection
+                moodPendingWinner = picked
+                moodLandedWinner = null
+                moodSpinToken += 1
+                moodStage = MoodDeckStage.REEL_SPINNING
+              },
+              onReelLanded = { landed ->
+                moodLandedWinner = landed
+                moodStage = MoodDeckStage.COUNTDOWN
+              },
+              onCancelToDeck = {
+                moodStage = MoodDeckStage.BROWSE
+                moodPendingWinner = null
+                moodLandedWinner = null
+              },
+              onOpenTitle = { titleSpec ->
+                val accent = activeMoodDeck?.category?.colorHex ?: 0xFF38BDF8
+                moodStage = MoodDeckStage.BROWSE
+                moodPendingWinner = null
+                moodLandedWinner = null
+                launchContent(titleSpec.toMediaItem(accent))
+              },
+              modifier = Modifier.onGloballyPositioned { coordinates ->
+                moodDeckTopYPx = coordinates.positionInParent().y.roundToInt()
+              }
+            )
+
+            // Bottom scroll cushion so focusing My Favourites or Mood Deck scrolls cleanly into view
+            Spacer(modifier = Modifier.height(160.dp))
+          }
         }
-      }
-
-      Spacer(modifier = Modifier.height(24.dp))
-
-      // Clean Minimalist Remote Hint at Bottom
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Text(
-          text = "FireLite • Apple TV Fluid Engine • D-Pad to Navigate • OK to Play",
-          fontSize = 10.sp,
-          color = Color(0x33FFFFFF),
-          fontWeight = FontWeight.Medium
-        )
       }
     }
 

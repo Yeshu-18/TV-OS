@@ -143,14 +143,14 @@ fun TvTopBar(
   Row(
     modifier = modifier
       .fillMaxWidth()
-      .padding(start = 28.dp, end = 28.dp, top = 16.dp, bottom = 4.dp),
+      .padding(start = 28.dp, end = 28.dp, top = 8.dp, bottom = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.SpaceBetween
   ) {
     // Brand identity
     Column {
       Text(
-        text = "FIRELITE",
+        text = "HOME TV",
         fontSize = 20.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 2.sp,
@@ -1055,24 +1055,24 @@ fun TvAppTile(
   val interactionSource = remember { MutableInteractionSource() }
   val isFocused by interactionSource.collectIsFocusedAsState()
 
-  // Apple TV spring physics executed directly inside graphicsLayer on RenderThread
+  // Smooth focus zoom executed inside graphicsLayer on RenderThread with zero vertical shift
   val scaleAnim = remember { androidx.compose.animation.core.Animatable(1.0f) }
   val glowAnim = remember { androidx.compose.animation.core.Animatable(0.0f) }
 
   LaunchedEffect(isFocused) {
     launch {
       scaleAnim.animateTo(
-        targetValue = if (isFocused) 1.12f else 1.0f,
+        targetValue = if (isFocused) 1.08f else 1.0f,
         animationSpec = spring(
-          dampingRatio = 0.72f, // Gentle natural Apple TV spring bounce
-          stiffness = 420f
+          dampingRatio = 0.90f,
+          stiffness = 550f
         )
       )
     }
     launch {
       glowAnim.animateTo(
         targetValue = if (isFocused) 1.0f else 0.0f,
-        animationSpec = tween(durationMillis = 140)
+        animationSpec = tween(durationMillis = 120)
       )
     }
   }
@@ -1085,12 +1085,11 @@ fun TvAppTile(
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
     modifier = modifier
-      .width(150.dp)
+      .width(148.dp)
       .graphicsLayer {
         val s = scaleAnim.value
         scaleX = s
         scaleY = s
-        translationY = if (s > 1.0f) (-5.dp.toPx() * ((s - 1.0f) / 0.12f)) else 0f
       }
       .clickable(interactionSource = interactionSource, indication = null) {
         onSelect()
@@ -1098,7 +1097,7 @@ fun TvAppTile(
   ) {
     Box(
       modifier = Modifier
-        .size(width = 150.dp, height = 92.dp)
+        .size(width = 148.dp, height = 84.dp)
         .drawBehind {
           val glow = glowAnim.value
           if (glow > 0.01f) {
@@ -1128,7 +1127,7 @@ fun TvAppTile(
           contentScale = ContentScale.Fit,
           modifier = Modifier
             .fillMaxSize()
-            .padding(14.dp)
+            .padding(12.dp)
         )
       } else if (iconResId != null) {
         Image(
@@ -1137,14 +1136,14 @@ fun TvAppTile(
           contentScale = ContentScale.Fit,
           modifier = Modifier
             .fillMaxSize()
-            .padding(14.dp)
+            .padding(12.dp)
         )
       } else if (systemIcon != null) {
         Icon(
           imageVector = systemIcon,
           contentDescription = title,
           tint = if (isFocused) Color(0xFF38BDF8) else Color(0xEEFFFFFF),
-          modifier = Modifier.size(36.dp)
+          modifier = Modifier.size(34.dp)
         )
       } else {
         Text(
@@ -1156,7 +1155,7 @@ fun TvAppTile(
       }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(6.dp))
     Text(
       text = title,
       fontSize = 12.sp,
@@ -1176,7 +1175,7 @@ fun TvAppTile(
 fun TvContentCard(
   item: MediaItem,
   onSelect: (MediaItem) -> Unit,
-  onFocus: (MediaItem) -> Unit,
+  onFocus: (MediaItem) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val interactionSource = remember { MutableInteractionSource() }
@@ -1186,17 +1185,16 @@ fun TvContentCard(
   val glowAnim = remember { androidx.compose.animation.core.Animatable(0.0f) }
 
   LaunchedEffect(isFocused) {
-    if (isFocused) onFocus(item)
     launch {
       scaleAnim.animateTo(
-        targetValue = if (isFocused) 1.10f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = 420f)
+        targetValue = if (isFocused) 1.08f else 1.0f,
+        animationSpec = spring(dampingRatio = 0.90f, stiffness = 550f)
       )
     }
     launch {
       glowAnim.animateTo(
         targetValue = if (isFocused) 1.0f else 0.0f,
-        animationSpec = tween(140)
+        animationSpec = tween(120)
       )
     }
   }
@@ -1219,12 +1217,11 @@ fun TvContentCard(
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
     modifier = modifier
-      .width(148.dp)
+      .width(146.dp)
       .graphicsLayer {
         val s = scaleAnim.value
         scaleX = s
         scaleY = s
-        translationY = if (s > 1.0f) (-5.dp.toPx() * ((s - 1.0f) / 0.10f)) else 0f
       }
       .clickable(interactionSource = interactionSource, indication = null) {
         onSelect(item)
@@ -1232,7 +1229,7 @@ fun TvContentCard(
   ) {
     Box(
       modifier = Modifier
-        .size(width = 148.dp, height = 88.dp)
+        .size(width = 146.dp, height = 80.dp)
         .drawBehind {
           val glow = glowAnim.value
           if (glow > 0.01f) {
@@ -1364,7 +1361,7 @@ fun TvContentCard(
       }
     }
 
-    Spacer(modifier = Modifier.height(6.dp))
+    Spacer(modifier = Modifier.height(5.dp))
     Text(
       text = item.title,
       fontSize = 12.sp,

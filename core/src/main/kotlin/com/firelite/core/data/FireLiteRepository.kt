@@ -114,7 +114,12 @@ class FireLiteRepository(private val context: Context? = null) {
     val key = if (category == Category.KIDS) "pins_kids_v1" else "pins_series_v1"
     val rawJson = p.getString(key, null) ?: return null
     return try {
-      json.decodeFromString<List<MediaItem>>(rawJson)
+      val decoded = json.decodeFromString<List<MediaItem>>(rawJson)
+      val migrated = decoded.map { HotstarDeepLinks.normalizeMediaItem(it, preferWatch = false) }
+      if (migrated != decoded) {
+        persistPins(category, migrated)
+      }
+      migrated
     } catch (_: Exception) {
       null
     }
@@ -143,10 +148,10 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "POPULAR",
         rating = "TV-Y7",
         accentColorHex = 0xFF00A3FF,
-        contentId = "1260021004",
-        contentUrl = "https://www.hotstar.com/in/shows/doraemon/1260021004",
+        contentId = HotstarDeepLinks.DORAEMON_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.showDetailsUri("doraemon", HotstarDeepLinks.DORAEMON_CONTENT_ID),
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Doraemon",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_doraemon",
         characterResName = "art_doraemon_char"
       ),
@@ -160,10 +165,10 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "FUN",
         rating = "TV-PG",
         accentColorHex = 0xFFEF4444,
-        contentId = "1260020929",
-        contentUrl = "https://www.hotstar.com/in/shows/shin-chan/1260020929",
+        contentId = HotstarDeepLinks.SHINCHAN_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.showDetailsUri("shin-chan", HotstarDeepLinks.SHINCHAN_CONTENT_ID),
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Shinchan",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_shinchan"
       ),
       MediaItem(
@@ -175,9 +180,10 @@ class FireLiteRepository(private val context: Context? = null) {
         durationOrEpisodes = "Season 4",
         rating = "TV-Y7",
         accentColorHex = 0xFF6366F1,
-        contentUrl = "https://www.hotstar.com/in/shows/ninja-hattori/1260000045",
+        contentId = HotstarDeepLinks.NINJA_HATTORI_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.NINJA_HATTORI_DETAILS_URI,
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Ninja+Hattori",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_hattori"
       ),
       MediaItem(
@@ -189,9 +195,10 @@ class FireLiteRepository(private val context: Context? = null) {
         durationOrEpisodes = "Season 10",
         rating = "TV-Y",
         accentColorHex = 0xFFF59E0B,
-        contentUrl = "https://www.hotstar.com/in/shows/motu-patlu/1971003164",
+        contentId = HotstarDeepLinks.MOTU_PATLU_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.showDetailsUri("motu-patlu", HotstarDeepLinks.MOTU_PATLU_CONTENT_ID),
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Motu+Patlu",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_motu_patlu"
       ),
       MediaItem(
@@ -227,19 +234,35 @@ class FireLiteRepository(private val context: Context? = null) {
 
     fun initialSeriesItems(): List<MediaItem> = listOf(
       MediaItem(
+        id = "im_game",
+        title = "I'm Game",
+        category = Category.SERIES,
+        platform = "JioHotstar",
+        subtitle = "Action Thriller • Tamil",
+        durationOrEpisodes = "2h 14m",
+        badge = "TRENDING",
+        rating = "UA 16+",
+        accentColorHex = 0xFF00A3FF,
+        contentId = HotstarDeepLinks.IM_GAME_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.IM_GAME_DETAILS_URI,
+        fallbackUrl = "https://www.hotstar.com/in/explore?search_query=I%27m+Game",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
+        artworkResName = "art_im_game"
+      ),
+      MediaItem(
         id = "heart_beat",
         title = "Heart Beat",
         category = Category.SERIES,
         platform = "JioHotstar",
         subtitle = "Medical Drama",
-        durationOrEpisodes = "Season 2",
+        durationOrEpisodes = "3 Seasons",
         badge = "NEW EPISODES",
         rating = "TV-14",
         accentColorHex = 0xFFF43F5E,
-        contentId = "1260168231",
-        contentUrl = "https://www.hotstar.com/in/shows/heart-beat/1260168231",
+        contentId = HotstarDeepLinks.HEART_BEAT_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.showDetailsUri("heart-beat", HotstarDeepLinks.HEART_BEAT_CONTENT_ID),
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Heart+Beat",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_heart_beat"
       ),
       MediaItem(
@@ -252,10 +275,10 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "TOP 10",
         rating = "TV-MA",
         accentColorHex = 0xFFEAB308,
-        contentId = "1271672560",
-        contentUrl = "https://www.hotstar.com/in/shows/the-court/1271672560",
+        contentId = HotstarDeepLinks.THE_COURT_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.showDetailsUri("the-court", HotstarDeepLinks.THE_COURT_CONTENT_ID),
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=The+Court",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_the_court"
       ),
       MediaItem(
@@ -268,9 +291,10 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "PRIME TIME",
         rating = "TV-PG",
         accentColorHex = 0xFF06B6D4,
-        contentUrl = "https://www.hotstar.com/in/shows/siragadikka-aasai/1260129356",
+        contentId = HotstarDeepLinks.SIRAGADIKKA_AASAI_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.showDetailsUri("siragadikka-aasai", HotstarDeepLinks.SIRAGADIKKA_AASAI_CONTENT_ID),
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Siragadikka+Aasai",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_siragadikka"
       ),
       MediaItem(
@@ -283,10 +307,10 @@ class FireLiteRepository(private val context: Context? = null) {
         badge = "TRENDING",
         rating = "TV-14",
         accentColorHex = 0xFF10B981,
-        contentId = "1271388570",
-        contentUrl = "https://www.hotstar.com/in/shows/ayyanar-thunai/1271388570",
+        contentId = HotstarDeepLinks.AYYANAR_THUNAI_CONTENT_ID,
+        contentUrl = HotstarDeepLinks.showDetailsUri("ayyanar-thunai", HotstarDeepLinks.AYYANAR_THUNAI_CONTENT_ID),
         fallbackUrl = "https://www.hotstar.com/in/explore?search_query=Ayyanar+Thunai",
-        deepLinkPackage = "in.startv.hotstar",
+        deepLinkPackage = HotstarDeepLinks.PACKAGE_NAME,
         artworkResName = "art_ayyanar"
       ),
       MediaItem(

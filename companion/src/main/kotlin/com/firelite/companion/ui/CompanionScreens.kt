@@ -114,7 +114,7 @@ fun FireLiteTopHeader(
     verticalAlignment = Alignment.CenterVertically
   ) {
     Text(
-      text = "FIRELITE",
+      text = "HOME TV",
       fontSize = 15.sp,
       fontWeight = FontWeight.Bold,
       letterSpacing = 2.5.sp,
@@ -1374,7 +1374,7 @@ fun PhoneMoreScreen(
       icon = Icons.Outlined.HelpOutline
     ),
     MoreSettingRow(
-      title = "About FireLite",
+      title = "About Home Tv",
       subtitle = "Version 1.0.0",
       icon = Icons.Default.Info
     ),
@@ -1559,7 +1559,7 @@ fun PhoneScreenMirrorScreen(
     )
     Spacer(modifier = Modifier.height(2.dp))
     Text(
-      text = "Send your phone screen to the paired FireLite TV",
+      text = "Send your phone screen to the paired Home Tv",
       fontSize = 13.sp,
       color = FigmaTheme.TextSecondary
     )
@@ -1729,7 +1729,7 @@ fun PairingDialog(
           modifier = Modifier.size(20.dp)
         )
         Spacer(modifier = Modifier.width(8.dp))
-        Text("Pair with FireLite TV", color = FigmaTheme.TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Pair with Home Tv", color = FigmaTheme.TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
       }
     },
     text = {

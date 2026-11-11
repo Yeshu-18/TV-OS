@@ -109,7 +109,7 @@ fun RemoteScreen(
       verticalAlignment = Alignment.CenterVertically
     ) {
       Text(
-        text = "FIRELITE",
+        text = "HOME TV",
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 2.sp,
